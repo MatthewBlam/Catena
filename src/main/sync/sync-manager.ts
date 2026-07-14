@@ -187,6 +187,7 @@ export async function syncSource(
           createdAt: new Date().toISOString(),
         })),
         "synced",
+        contentHash,
       );
     } catch (err) {
       errors.push(

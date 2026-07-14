@@ -2,12 +2,18 @@ import type Database from "better-sqlite3";
 
 // --- Sources ---
 
+export type SyncOutcome = "ok" | "partial" | "error" | "cancelled";
+
 export interface SourceRow {
   id: string;
   provider: string;
   name: string;
   rootExternalId: string;
   createdAt: string;
+  lastSyncAt: string | null;
+  lastSyncStatus: SyncOutcome | null;
+  lastSyncError: string | null;
+  lastSyncErrorCount: number;
 }
 
 interface SourceDbRow {
@@ -16,9 +22,33 @@ interface SourceDbRow {
   name: string;
   root_external_id: string;
   created_at: string;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  last_sync_error_count: number;
 }
 
-export function insertSource(db: Database.Database, source: SourceRow): void {
+function mapSourceRow(row: SourceDbRow): SourceRow {
+  return {
+    id: row.id,
+    provider: row.provider,
+    name: row.name,
+    rootExternalId: row.root_external_id,
+    createdAt: row.created_at,
+    lastSyncAt: row.last_sync_at,
+    lastSyncStatus: (row.last_sync_status as SyncOutcome | null) ?? null,
+    lastSyncError: row.last_sync_error,
+    lastSyncErrorCount: row.last_sync_error_count,
+  };
+}
+
+/** A source as the caller creates it. The sync-state columns are written by syncing, not by the caller. */
+export type NewSource = Pick<
+  SourceRow,
+  "id" | "provider" | "name" | "rootExternalId" | "createdAt"
+>;
+
+export function insertSource(db: Database.Database, source: NewSource): void {
   db.prepare(
     "INSERT INTO sources (id, provider, name, root_external_id, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(
@@ -37,27 +67,14 @@ export function getSourceById(
   const row = db.prepare("SELECT * FROM sources WHERE id = ?").get(id) as
     | SourceDbRow
     | undefined;
-  if (!row) return null;
-  return {
-    id: row.id,
-    provider: row.provider,
-    name: row.name,
-    rootExternalId: row.root_external_id,
-    createdAt: row.created_at,
-  };
+  return row ? mapSourceRow(row) : null;
 }
 
 export function getAllSources(db: Database.Database): SourceRow[] {
   const rows = db
     .prepare("SELECT * FROM sources ORDER BY created_at DESC")
     .all() as SourceDbRow[];
-  return rows.map((row) => ({
-    id: row.id,
-    provider: row.provider,
-    name: row.name,
-    rootExternalId: row.root_external_id,
-    createdAt: row.created_at,
-  }));
+  return rows.map(mapSourceRow);
 }
 
 export function getAllSourcesWithCounts(
@@ -73,11 +90,7 @@ export function getAllSourcesWithCounts(
     )
     .all() as (SourceDbRow & { document_count: number })[];
   return rows.map((row) => ({
-    id: row.id,
-    provider: row.provider,
-    name: row.name,
-    rootExternalId: row.root_external_id,
-    createdAt: row.created_at,
+    ...mapSourceRow(row),
     documentCount: row.document_count,
   }));
 }
@@ -92,14 +105,33 @@ export function getSourceByProviderAndRoot(
       "SELECT * FROM sources WHERE provider = ? AND root_external_id = ?",
     )
     .get(provider, rootExternalId) as SourceDbRow | undefined;
-  if (!row) return null;
-  return {
-    id: row.id,
-    provider: row.provider,
-    name: row.name,
-    rootExternalId: row.root_external_id,
-    createdAt: row.created_at,
-  };
+  return row ? mapSourceRow(row) : null;
+}
+
+export interface SourceSyncState {
+  lastSyncAt: string;
+  lastSyncStatus: SyncOutcome;
+  lastSyncError: string | null;
+  lastSyncErrorCount: number;
+}
+
+/** No-ops harmlessly if the source was removed mid-sync. */
+export function updateSourceSyncState(
+  db: Database.Database,
+  sourceId: string,
+  state: SourceSyncState,
+): void {
+  db.prepare(
+    `UPDATE sources
+     SET last_sync_at = ?, last_sync_status = ?, last_sync_error = ?, last_sync_error_count = ?
+     WHERE id = ?`,
+  ).run(
+    state.lastSyncAt,
+    state.lastSyncStatus,
+    state.lastSyncError,
+    state.lastSyncErrorCount,
+    sourceId,
+  );
 }
 
 export function deleteSource(db: Database.Database, id: string): void {
@@ -235,6 +267,11 @@ export function getDocumentByExternalId(
   return mapDocRow(row);
 }
 
+/**
+ * Moves a document's sync status WITHOUT touching content_hash. This is the
+ * error path: a document that failed to embed must not keep a hash, or the next
+ * sync sees the hash match and skips it forever.
+ */
 export function updateDocumentSyncStatus(
   db: Database.Database,
   id: string,
@@ -243,6 +280,21 @@ export function updateDocumentSyncStatus(
   db.prepare(
     "UPDATE documents SET sync_status = ?, last_synced_at = ? WHERE id = ?",
   ).run(status, new Date().toISOString(), id);
+}
+
+/**
+ * Sets status and content_hash together. Only ever call this in the same
+ * transaction as the chunk write — see replaceChunksForDocument.
+ */
+export function updateDocumentSyncState(
+  db: Database.Database,
+  id: string,
+  status: string,
+  contentHash: string | null,
+): void {
+  db.prepare(
+    "UPDATE documents SET sync_status = ?, content_hash = ?, last_synced_at = ? WHERE id = ?",
+  ).run(status, contentHash, new Date().toISOString(), id);
 }
 
 // --- Chunks ---
@@ -348,6 +400,27 @@ export function getChunksWithEmbeddingsByModel(
   return rows.map(mapChunkRow);
 }
 
+/**
+ * Streams chunks one row at a time instead of materializing every embedding
+ * Buffer at once. At 1536 dimensions an embedding is ~6 KB, so the array-returning
+ * version above costs ~61 MB per search at its 10k cap — and the cap is the only
+ * thing keeping that number from growing with the corpus. Callers that only need
+ * a top-K should iterate and keep O(K).
+ */
+export function* iterateChunksWithEmbeddingsByModel(
+  db: Database.Database,
+  model: string,
+): Generator<ChunkRow> {
+  const rows = db
+    .prepare(
+      "SELECT * FROM chunks WHERE embedding IS NOT NULL AND embedding_model = ?",
+    )
+    .iterate(model) as IterableIterator<ChunkDbRow>;
+  for (const row of rows) {
+    yield mapChunkRow(row);
+  }
+}
+
 export function deleteChunksByDocumentId(
   db: Database.Database,
   documentId: string,
@@ -355,20 +428,50 @@ export function deleteChunksByDocumentId(
   db.prepare("DELETE FROM chunks WHERE document_id = ?").run(documentId);
 }
 
+/**
+ * The content_hash invariant, in one place: a document's hash is non-null iff the
+ * chunks currently in the database were derived from exactly that content. So the
+ * hash is written in the same transaction as the chunks, and `contentHash` is a
+ * required parameter — an optional one invites the caller to commit a hash for
+ * chunks that never landed, which is how documents used to disappear from search
+ * permanently.
+ */
 export function replaceChunksForDocument(
   db: Database.Database,
   docId: string,
   chunks: ChunkRow[],
   syncStatus: string,
+  contentHash: string | null,
 ): void {
   const replace = db.transaction(() => {
     deleteChunksByDocumentId(db, docId);
     if (chunks.length > 0) {
       upsertChunks(db, chunks);
     }
-    updateDocumentSyncStatus(db, docId, syncStatus);
+    updateDocumentSyncState(db, docId, syncStatus, contentHash);
   });
   replace();
+}
+
+/** Chunks go via ON DELETE CASCADE, which fires the FTS delete trigger. */
+export function deleteDocumentsByIds(
+  db: Database.Database,
+  ids: string[],
+): number {
+  if (ids.length === 0) return 0;
+  const BATCH_SIZE = 500;
+  let deleted = 0;
+  const run = db.transaction(() => {
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      const placeholders = batch.map(() => "?").join(",");
+      deleted += db
+        .prepare(`DELETE FROM documents WHERE id IN (${placeholders})`)
+        .run(...batch).changes;
+    }
+  });
+  run();
+  return deleted;
 }
 
 export function getDocumentCountBySourceId(
@@ -487,10 +590,22 @@ export function getStorageStats(db: Database.Database): StorageStatsRow {
     .get() as StorageStatsRow;
 }
 
+/**
+ * "Clear all data" must not silently re-enable telemetry. The opt-out lives in
+ * settings as telemetry_enabled, and posthog.ts reads it as `!== "false"` — so
+ * deleting the row flips a user's explicit opt-out back on. device_id is kept for
+ * the same reason in reverse: minting a fresh analytics identity on "clear data"
+ * is worse for the user than reusing the one they already have.
+ */
+const PRESERVED_SETTING_KEYS = ["telemetry_enabled", "device_id"] as const;
+
 export function clearAllData(db: Database.Database): void {
+  const placeholders = PRESERVED_SETTING_KEYS.map(() => "?").join(",");
   const clear = db.transaction(() => {
-    db.exec("DELETE FROM sources"); // cascades to documents → chunks
-    db.exec("DELETE FROM settings");
+    db.exec("DELETE FROM sources"); // cascades to documents → chunks → chunks_fts
+    db.prepare(`DELETE FROM settings WHERE key NOT IN (${placeholders})`).run(
+      ...PRESERVED_SETTING_KEYS,
+    );
     db.exec("DELETE FROM secrets");
   });
   clear();
@@ -503,21 +618,34 @@ export interface EmbeddingHealthRow {
   distinctModels: string[];
 }
 
+/**
+ * Counts chunks that actually carry an embedding for `model`. The missing
+ * `embedding IS NOT NULL` used to let un-embedded chunks inflate the count, which
+ * skewed embedding:health's mismatchedChunks and would permanently false-positive
+ * the truncation banner.
+ */
 export function getChunkCountByModel(
   db: Database.Database,
   model: string,
 ): number {
   return (
     db
-      .prepare("SELECT COUNT(*) as c FROM chunks WHERE embedding_model = ?")
+      .prepare(
+        "SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL AND embedding_model = ?",
+      )
       .get(model) as { c: number }
   ).c;
 }
 
+/**
+ * A 'pending' document at startup means the app died mid-sync, so its hash (if any)
+ * describes chunks that were never written. Clear the hash along with the status,
+ * or the next sync matches the hash and skips the document forever.
+ */
 export function resetStalePendingDocuments(db: Database.Database): number {
   const result = db
     .prepare(
-      "UPDATE documents SET sync_status = 'error' WHERE sync_status = 'pending'",
+      "UPDATE documents SET sync_status = 'error', content_hash = NULL WHERE sync_status = 'pending'",
     )
     .run();
   return result.changes;

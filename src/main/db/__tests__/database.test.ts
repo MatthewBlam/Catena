@@ -24,6 +24,11 @@ import {
   replaceChunksForDocument,
   deleteChunksByDocumentId,
   searchFts,
+  getDocumentById,
+  deleteDocumentsByIds,
+  iterateChunksWithEmbeddingsByModel,
+  updateSourceSyncState,
+  resetStalePendingDocuments,
   type ChunkRow,
 } from "../database";
 
@@ -376,7 +381,7 @@ describe("replaceChunksForDocument", () => {
       },
     ];
 
-    replaceChunksForDocument(db, "d1", newChunks, "synced");
+    replaceChunksForDocument(db, "d1", newChunks, "synced", "hash-v2");
 
     const chunks = getChunksByDocumentId(db, "d1");
     expect(chunks).toHaveLength(1);
@@ -580,5 +585,272 @@ describe("upsertChunks FTS consistency", () => {
     upsertChunks(db, [chunk("c2", "penguin unrelated")]);
 
     expect(searchFts(db, "zebra", 10)).toEqual([]);
+  });
+});
+
+describe("clearAllData preserves telemetry identity (H4)", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+  });
+  afterEach(() => db.close());
+
+  it("keeps the telemetry opt-out and the device id, and drops everything else", () => {
+    seedFixtures(db);
+    upsertSetting(db, "telemetry_enabled", "false");
+    upsertSetting(db, "device_id", "device-abc");
+
+    clearAllData(db);
+
+    // posthog.ts reads this as `!== "false"`, so losing the row silently turns
+    // telemetry back on for someone who explicitly turned it off.
+    expect(getSetting(db, "telemetry_enabled")).toBe("false");
+    expect(getSetting(db, "device_id")).toBe("device-abc");
+
+    expect(getSetting(db, "embedding_provider")).toBeNull();
+    expect(getStorageStats(db)).toEqual({
+      sourceCount: 0,
+      documentCount: 0,
+      chunkCount: 0,
+    });
+  });
+});
+
+describe("replaceChunksForDocument content-hash invariant", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+    seedFixtures(db);
+  });
+  afterEach(() => db.close());
+
+  it("commits the hash in the same transaction as the chunks", () => {
+    replaceChunksForDocument(
+      db,
+      "d1",
+      [
+        {
+          id: "c9",
+          documentId: "d1",
+          chunkIndex: 0,
+          heading: null,
+          text: "fresh",
+          embedding: Buffer.alloc(12),
+          embeddingModel: "embed-v4.0",
+          tokenCount: 1,
+          createdAt: "2024-01-02T00:00:00Z",
+        },
+      ],
+      "synced",
+      "hash-v2",
+    );
+
+    expect(getDocumentById(db, "d1")!.contentHash).toBe("hash-v2");
+    expect(getChunksByDocumentId(db, "d1").map((c) => c.id)).toEqual(["c9"]);
+  });
+
+  it("commits a hash alongside zero chunks for an empty document", () => {
+    replaceChunksForDocument(db, "d1", [], "synced", "hash-empty");
+
+    expect(getDocumentById(db, "d1")!.contentHash).toBe("hash-empty");
+    expect(getChunksByDocumentId(db, "d1")).toHaveLength(0);
+  });
+
+  it("updateDocumentSyncStatus leaves content_hash alone for the error path", () => {
+    replaceChunksForDocument(db, "d1", [], "synced", "hash-v2");
+
+    updateDocumentSyncStatus(db, "d1", "error");
+
+    const doc = getDocumentById(db, "d1")!;
+    expect(doc.syncStatus).toBe("error");
+    expect(doc.contentHash).toBe("hash-v2");
+  });
+});
+
+describe("resetStalePendingDocuments", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+    seedFixtures(db);
+  });
+  afterEach(() => db.close());
+
+  it("clears the hash of a document left pending by a crash", () => {
+    // A doc interrupted mid-sync: hash written, chunks never landed.
+    db.prepare(
+      "UPDATE documents SET sync_status = 'pending', content_hash = 'half-written' WHERE id = 'd1'",
+    ).run();
+
+    expect(resetStalePendingDocuments(db)).toBe(1);
+
+    const doc = getDocumentById(db, "d1")!;
+    expect(doc.syncStatus).toBe("error");
+    expect(doc.contentHash).toBeNull();
+  });
+});
+
+describe("deleteDocumentsByIds", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+    seedFixtures(db);
+  });
+  afterEach(() => db.close());
+
+  it("cascades to chunks and to the FTS index", () => {
+    expect(searchFts(db, "chunk", 10).length).toBeGreaterThan(0);
+
+    expect(deleteDocumentsByIds(db, ["d1"])).toBe(1);
+
+    expect(getDocumentById(db, "d1")).toBeNull();
+    expect(getChunksByDocumentId(db, "d1")).toHaveLength(0);
+    expect(searchFts(db, "chunk", 10)).toEqual([]);
+  });
+
+  it("returns 0 and touches nothing for an empty id list", () => {
+    expect(deleteDocumentsByIds(db, [])).toBe(0);
+    expect(getStorageStats(db).documentCount).toBe(1);
+  });
+
+  it("handles more ids than the 500-per-statement batch", () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 1200; i++) {
+      const id = `bulk-${i}`;
+      ids.push(id);
+      insertDocument(db, {
+        id,
+        sourceId: "s1",
+        provider: "notion",
+        externalId: `bulk-e${i}`,
+        title: `Bulk ${i}`,
+        url: null,
+        mimeType: null,
+        modifiedAt: null,
+        contentHash: null,
+        lastSyncedAt: null,
+        syncStatus: "synced",
+      });
+    }
+
+    expect(deleteDocumentsByIds(db, ids)).toBe(1200);
+    expect(getStorageStats(db).documentCount).toBe(1); // d1 survives
+  });
+});
+
+describe("iterateChunksWithEmbeddingsByModel", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+    seedFixtures(db);
+  });
+  afterEach(() => db.close());
+
+  it("streams only the chunks embedded with the given model", () => {
+    const ids = [...iterateChunksWithEmbeddingsByModel(db, "embed-v4.0")].map(
+      (c) => c.id,
+    );
+    expect(ids).toEqual(["c1"]);
+  });
+
+  it("skips chunks that have no embedding", () => {
+    upsertChunks(db, [
+      {
+        id: "c-noembed",
+        documentId: "d1",
+        chunkIndex: 5,
+        heading: null,
+        text: "not embedded",
+        embedding: null,
+        embeddingModel: "embed-v4.0",
+        tokenCount: 1,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    const ids = [...iterateChunksWithEmbeddingsByModel(db, "embed-v4.0")].map(
+      (c) => c.id,
+    );
+    expect(ids).toEqual(["c1"]);
+  });
+
+  it("can be abandoned partway without exhausting the statement", () => {
+    for (const chunk of iterateChunksWithEmbeddingsByModel(db, "embed-v4.0")) {
+      expect(chunk.id).toBe("c1");
+      break;
+    }
+    // The db must still be usable — a leaked iterator would hold the statement open.
+    expect(getStorageStats(db).chunkCount).toBe(2);
+  });
+});
+
+describe("getChunkCountByModel", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+    seedFixtures(db);
+  });
+  afterEach(() => db.close());
+
+  it("does not count chunks that carry the model name but no embedding", () => {
+    upsertChunks(db, [
+      {
+        id: "c-noembed",
+        documentId: "d1",
+        chunkIndex: 5,
+        heading: null,
+        text: "not embedded",
+        embedding: null,
+        embeddingModel: "embed-v4.0",
+        tokenCount: 1,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    expect(getChunkCountByModel(db, "embed-v4.0")).toBe(1);
+  });
+});
+
+describe("updateSourceSyncState (H3)", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+    seedFixtures(db);
+  });
+  afterEach(() => db.close());
+
+  it("defaults to no recorded sync", () => {
+    const source = getSourceById(db, "s1")!;
+    expect(source.lastSyncAt).toBeNull();
+    expect(source.lastSyncStatus).toBeNull();
+    expect(source.lastSyncError).toBeNull();
+    expect(source.lastSyncErrorCount).toBe(0);
+  });
+
+  it("round-trips through getAllSourcesWithCounts", () => {
+    updateSourceSyncState(db, "s1", {
+      lastSyncAt: "2024-02-01T00:00:00Z",
+      lastSyncStatus: "partial",
+      lastSyncError: "Cohere rate limit",
+      lastSyncErrorCount: 3,
+    });
+
+    const source = getAllSourcesWithCounts(db).find((s) => s.id === "s1")!;
+    expect(source.lastSyncAt).toBe("2024-02-01T00:00:00Z");
+    expect(source.lastSyncStatus).toBe("partial");
+    expect(source.lastSyncError).toBe("Cohere rate limit");
+    expect(source.lastSyncErrorCount).toBe(3);
+    expect(source.documentCount).toBe(1);
+  });
+
+  it("no-ops when the source was removed mid-sync", () => {
+    deleteSource(db, "s1");
+    expect(() =>
+      updateSourceSyncState(db, "s1", {
+        lastSyncAt: "2024-02-01T00:00:00Z",
+        lastSyncStatus: "ok",
+        lastSyncError: null,
+        lastSyncErrorCount: 0,
+      }),
+    ).not.toThrow();
   });
 });
