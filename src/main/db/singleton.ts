@@ -25,6 +25,8 @@ export function getDb(): Database.Database {
 
   _db.pragma("journal_mode = WAL");
   _db.pragma("foreign_keys = ON");
+  // Required for REPLACE-induced deletes to fire the chunks_fts delete trigger.
+  _db.pragma("recursive_triggers = ON");
   _db.pragma("busy_timeout = 5000");
 
   runMigrations(_db, dbPath);

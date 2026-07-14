@@ -22,6 +22,9 @@ import {
   getEmbeddingHealth,
   getChunkCountByModel,
   replaceChunksForDocument,
+  deleteChunksByDocumentId,
+  searchFts,
+  type ChunkRow,
 } from "../database";
 
 describe("migrations", () => {
@@ -487,5 +490,95 @@ describe("getChunkCountByModel", () => {
     seedFixtures(db);
     expect(getChunkCountByModel(db, "embed-v4.0")).toBe(1);
     expect(getChunkCountByModel(db, "nomic-embed-text")).toBe(1);
+  });
+});
+
+describe("upsertChunks FTS consistency", () => {
+  let db: Database.Database;
+
+  function chunk(id: string, text: string): ChunkRow {
+    return {
+      id,
+      documentId: "d1",
+      chunkIndex: 0,
+      heading: null,
+      text,
+      embedding: null,
+      embeddingModel: null,
+      tokenCount: 2,
+      createdAt: "2024-01-01T00:00:00Z",
+    };
+  }
+
+  function rowidOf(id: string): number {
+    return (
+      db.prepare("SELECT rowid FROM chunks WHERE id = ?").get(id) as {
+        rowid: number;
+      }
+    ).rowid;
+  }
+
+  beforeEach(() => {
+    db = createTestDb();
+    insertSource(db, {
+      id: "s1",
+      provider: "notion",
+      name: "Source 1",
+      rootExternalId: "ext1",
+      createdAt: "2024-01-01T00:00:00Z",
+    });
+    insertDocument(db, {
+      id: "d1",
+      sourceId: "s1",
+      provider: "notion",
+      externalId: "e1",
+      title: "Doc 1",
+      url: null,
+      mimeType: null,
+      modifiedAt: null,
+      contentHash: null,
+      lastSyncedAt: null,
+      syncStatus: "synced",
+    });
+  });
+  afterEach(() => db.close());
+
+  // INSERT OR REPLACE deletes the old row and inserts a new one, moving the
+  // rowid. ON CONFLICT DO UPDATE edits in place. The FTS index is keyed by
+  // rowid, so stability here is what keeps it in sync.
+  it("preserves the chunk rowid when overwriting an existing id", () => {
+    upsertChunks(db, [chunk("c1", "zebra original")]);
+    const before = rowidOf("c1");
+
+    upsertChunks(db, [chunk("c1", "giraffe replacement")]);
+
+    expect(rowidOf("c1")).toBe(before);
+  });
+
+  it("removes the old text from the FTS index on overwrite", () => {
+    upsertChunks(db, [chunk("c1", "zebra original")]);
+    upsertChunks(db, [chunk("c1", "giraffe replacement")]);
+
+    expect(searchFts(db, "zebra", 10)).toEqual([]);
+    expect(searchFts(db, "giraffe", 10).map((c) => c.id)).toEqual(["c1"]);
+  });
+
+  // The orphaned FTS row left behind by INSERT OR REPLACE points at a rowid
+  // SQLite will hand to an unrelated chunk later, and the stale term then
+  // matches that chunk's row — a hit whose text does not contain the query.
+  // PRAGMA integrity_check and FTS 'integrity-check' both report "ok".
+  it("does not leak stale terms onto a recycled rowid", () => {
+    // Belt-and-braces: upsertChunks must hold even if the singleton's
+    // recursive_triggers pragma is ever dropped.
+    db.pragma("recursive_triggers = OFF");
+
+    upsertChunks(db, [chunk("c1", "zebra original")]);
+    upsertChunks(db, [chunk("c1", "giraffe replacement")]);
+
+    // Empty the table so the next insert reuses the low rowid.
+    deleteChunksByDocumentId(db, "d1");
+    upsertChunks(db, [chunk("c2", "penguin unrelated")]);
+
+    expect(searchFts(db, "zebra", 10)).toEqual([]);
   });
 });

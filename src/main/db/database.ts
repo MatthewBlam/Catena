@@ -285,10 +285,27 @@ function mapChunkRow(row: ChunkDbRow): ChunkRow {
   };
 }
 
+// ON CONFLICT DO UPDATE, not INSERT OR REPLACE. REPLACE deletes the conflicting
+// row and inserts a new one, which moves the rowid; the chunks_fts index is
+// keyed by rowid, and its delete trigger only fires under REPLACE when
+// recursive_triggers is on. Miss that and the stale FTS row survives, pointing
+// at a rowid SQLite later hands to an unrelated chunk — that chunk then matches
+// terms its text never contained. Neither PRAGMA integrity_check nor FTS
+// 'integrity-check' detects it. DO UPDATE edits in place, keeping the rowid and
+// firing chunks_fts_au regardless of the pragma.
 export function upsertChunks(db: Database.Database, chunks: ChunkRow[]): void {
   const insert = db.prepare(
-    `INSERT OR REPLACE INTO chunks (id, document_id, chunk_index, heading, text, embedding, embedding_model, token_count, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chunks (id, document_id, chunk_index, heading, text, embedding, embedding_model, token_count, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       document_id = excluded.document_id,
+       chunk_index = excluded.chunk_index,
+       heading = excluded.heading,
+       text = excluded.text,
+       embedding = excluded.embedding,
+       embedding_model = excluded.embedding_model,
+       token_count = excluded.token_count,
+       created_at = excluded.created_at`,
   );
   const batch = db.transaction((items: ChunkRow[]) => {
     for (const c of items) {
