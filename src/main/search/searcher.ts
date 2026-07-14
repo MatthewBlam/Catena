@@ -8,7 +8,8 @@ import {
   getEmbeddingModelName,
 } from "./embedder";
 import {
-  getChunksWithEmbeddingsByModel,
+  iterateChunksWithEmbeddingsByModel,
+  getChunkCountByModel,
   getDocumentsByIds,
   searchFts,
 } from "../db/database";
@@ -20,6 +21,15 @@ const FTS_TOP_K = 40;
 const RRF_K = 60;
 const RERANK_CANDIDATES = 40;
 const RESULT_LIMIT = 8;
+
+/**
+ * A backstop, not a budget. The scan is O(1) in memory now, so this exists only
+ * to bound how long the main thread can be held; a corpus this large is a
+ * different problem (an ANN index) than a bigger constant would solve. When we
+ * hit it we *say so* — the old 10k cap truncated results in silence, which is
+ * indistinguishable from "your document isn't there".
+ */
+const MAX_SCAN = 250_000;
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) {
@@ -68,46 +78,97 @@ function rrfMerge(
     .map(([id, score]) => ({ chunk: chunkMap.get(id)!, score }));
 }
 
+type Scored = { chunk: ChunkRow; score: number };
+
+/**
+ * Keeps `top` sorted descending and never longer than K. Ties keep scan order,
+ * matching the stable full sort this replaced.
+ */
+function insertTopK(top: Scored[], entry: Scored, k: number): void {
+  if (top.length === k && entry.score <= top[top.length - 1].score) return;
+
+  let lo = 0;
+  let hi = top.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (top[mid].score >= entry.score) lo = mid + 1;
+    else hi = mid;
+  }
+  top.splice(lo, 0, entry);
+  if (top.length > k) top.pop();
+}
+
+export interface SearchOptions {
+  /**
+   * Rows the vector scan may read before it gives up and reports truncation.
+   * Defaults to MAX_SCAN; tests override it so the truncation path can be
+   * exercised without seeding a quarter of a million chunks.
+   */
+  maxScan?: number;
+}
+
+/**
+ * One streaming pass, holding only the top K. The array-returning query this
+ * replaced materialized *every* embedding Buffer — at 1536 dimensions that is
+ * ~6 KB a chunk, so its 10k cap was already a 61 MB allocation per search, and
+ * the cap was the only thing keeping that number from growing with the corpus.
+ * Memory here is O(K), so the cap can go.
+ */
+function scanVectors(
+  db: Database.Database,
+  model: string,
+  queryEmbedding: Float32Array,
+  maxScan: number,
+): { top: Scored[]; scanned: number } {
+  const top: Scored[] = [];
+  let scanned = 0;
+
+  for (const chunk of iterateChunksWithEmbeddingsByModel(db, model)) {
+    scanned++;
+    const score = cosineSimilarity(
+      queryEmbedding,
+      bufferToEmbedding(chunk.embedding!),
+    );
+    if (Number.isFinite(score)) insertTopK(top, { chunk, score }, COSINE_TOP_K);
+    if (scanned >= maxScan) break;
+  }
+
+  return { top, scanned };
+}
+
 export async function search(
   db: Database.Database,
   query: string,
   embedConfig: EmbedConfig,
+  options: SearchOptions = {},
 ): Promise<SearchResponse> {
-  const embeddingPromise = embedQuery(query, embedConfig);
-  const rewritePromise = rewriteQuery(query, embedConfig);
+  const { maxScan = MAX_SCAN } = options;
 
-  const rewritten = await rewritePromise;
-  if (rewritten !== query) {
-    console.log(`Query rewrite: "${query}" → "${rewritten}"`);
-  }
+  const embeddingPromise = embedQuery(query, embedConfig);
+  const rewritten = await rewriteQuery(query, embedConfig);
 
   const ftsResults = searchFts(db, rewritten, FTS_TOP_K);
   const queryEmbedding = await embeddingPromise;
 
   const model = getEmbeddingModelName(embedConfig);
-  const chunks = getChunksWithEmbeddingsByModel(db, model);
+  const { top: vectorScored, scanned } = scanVectors(
+    db,
+    model,
+    queryEmbedding,
+    maxScan,
+  );
 
-  if (chunks.length === 0 && ftsResults.length === 0) {
+  if (vectorScored.length === 0 && ftsResults.length === 0) {
     return { results: [], rerankFailed: false };
   }
 
-  if (chunks.length >= 5000) {
-    console.warn(
-      `Search loading ${chunks.length} chunks into memory — consider limiting corpus size`,
-    );
+  // Only pay for the COUNT when we actually stopped short. `scanned === maxScan`
+  // on a corpus of exactly maxScan chunks saw everything and is not truncated.
+  let truncated: SearchResponse["truncated"];
+  if (scanned >= maxScan) {
+    const total = getChunkCountByModel(db, model);
+    if (total > scanned) truncated = { scanned, total };
   }
-
-  const vectorScored = chunks
-    .map((chunk) => ({
-      chunk,
-      score: cosineSimilarity(
-        queryEmbedding,
-        bufferToEmbedding(chunk.embedding!),
-      ),
-    }))
-    .filter(({ score }) => Number.isFinite(score))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, COSINE_TOP_K);
 
   const merged =
     ftsResults.length > 0
@@ -170,5 +231,6 @@ export async function search(
     results,
     rerankFailed,
     ...(rewritten !== query ? { rewrittenQuery: rewritten } : {}),
+    ...(truncated ? { truncated } : {}),
   };
 }

@@ -317,6 +317,116 @@ describe("search", () => {
     expect(titles).toContain("Project Plan");
   });
 
+  it("finds a chunk beyond the 10,000th (H6)", async () => {
+    // The old scan was `SELECT ... LIMIT 10000` with no ORDER BY, so it saw the
+    // first 10k chunks by rowid and nothing else. The needle goes in last, which
+    // puts it exactly one row past that cap: on `main` it is unreachable by
+    // search, no matter how well it matches.
+    const filler = Array.from({ length: 10_000 }, (_, i) => ({
+      id: `filler-${i}`,
+      documentId: "d1",
+      chunkIndex: i,
+      heading: null,
+      text: `filler passage ${i}`,
+      embedding: makeEmbedding([0, 1, 0]),
+      embeddingModel: "nomic-embed-text",
+      tokenCount: 3,
+      createdAt: "2024-01-01T00:00:00Z",
+    }));
+    upsertChunks(db, filler);
+    upsertChunks(db, [
+      {
+        id: "needle",
+        documentId: "d2",
+        chunkIndex: 0,
+        heading: null,
+        text: "the buried passage",
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    // Ollama config: no rerank, so the vector scan is the only thing under test.
+    // "zzqqxx" appears in no chunk, so FTS cannot rescue the needle either — the
+    // one and only path to it is a scan that reaches past row 10,000.
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: [[1, 0, 0]] }),
+    } as Response);
+
+    const { results } = await search(db, "zzqqxx", { provider: "ollama" });
+
+    expect(results[0]?.chunkId).toBe("needle");
+  });
+
+  it("reports truncation when the scan stops short of the corpus", async () => {
+    upsertChunks(
+      db,
+      Array.from({ length: 3 }, (_, i) => ({
+        id: `c${i}`,
+        documentId: "d1",
+        chunkIndex: i,
+        heading: null,
+        text: `chunk ${i}`,
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 2,
+        createdAt: "2024-01-01T00:00:00Z",
+      })),
+    );
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: [[1, 0, 0]] }),
+    } as Response);
+
+    const response = await search(
+      db,
+      "zzqqxx",
+      { provider: "ollama" },
+      { maxScan: 2 },
+    );
+
+    // Truncating in silence is the actual bug: it is indistinguishable from the
+    // document not being there at all.
+    expect(response.truncated).toEqual({ scanned: 2, total: 3 });
+  });
+
+  it("does not report truncation when the bound is exactly the corpus size", async () => {
+    upsertChunks(
+      db,
+      Array.from({ length: 2 }, (_, i) => ({
+        id: `c${i}`,
+        documentId: "d1",
+        chunkIndex: i,
+        heading: null,
+        text: `chunk ${i}`,
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 2,
+        createdAt: "2024-01-01T00:00:00Z",
+      })),
+    );
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: [[1, 0, 0]] }),
+    } as Response);
+
+    const response = await search(
+      db,
+      "zzqqxx",
+      { provider: "ollama" },
+      { maxScan: 2 },
+    );
+
+    // Stopping *at* the last row saw everything. Warning here would train the
+    // user to ignore the banner.
+    expect(response.truncated).toBeUndefined();
+  });
+
   it("falls back to cosine order and sets rerankFailed when rerank errors", async () => {
     upsertChunks(db, [
       {

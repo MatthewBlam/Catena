@@ -60,6 +60,12 @@ export interface SearchResponse {
   results: SearchResult[];
   rerankFailed: boolean;
   rewrittenQuery?: string;
+  /**
+   * Set when the vector scan hit its bound before reaching the end of the
+   * corpus, so these results were chosen from `scanned` of `total` chunks.
+   * Silent truncation is the bug; the renderer must say so.
+   */
+  truncated?: { scanned: number; total: number };
 }
 
 export interface SyncProgress {
