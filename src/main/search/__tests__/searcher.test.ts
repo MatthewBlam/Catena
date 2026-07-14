@@ -469,3 +469,252 @@ describe("search", () => {
     );
   });
 });
+
+describe("search cancellation (M15)", () => {
+  let db: Database.Database;
+  const embedConfig: EmbedConfig = { provider: "cohere", apiKey: "test-key" };
+
+  /** Rejects with what an aborted `fetch` rejects with. */
+  const abortError = (): DOMException =>
+    new DOMException("The operation was aborted.", "AbortError");
+
+  beforeEach(() => {
+    db = createTestDb();
+    insertSource(db, {
+      id: "s1",
+      provider: "notion",
+      name: "Test Source",
+      rootExternalId: "ext1",
+      createdAt: "2024-01-01T00:00:00Z",
+    });
+    insertDocument(db, {
+      id: "d1",
+      sourceId: "s1",
+      provider: "notion",
+      externalId: "e1",
+      title: "Meeting Notes",
+      url: "https://notion.so/meeting",
+      mimeType: "text/plain",
+      modifiedAt: null,
+      contentHash: null,
+      lastSyncedAt: null,
+      syncStatus: "synced",
+    });
+    upsertChunks(db, [
+      {
+        id: "c1",
+        documentId: "d1",
+        chunkIndex: 0,
+        heading: null,
+        text: "A chunk",
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "embed-v4.0",
+        tokenCount: 2,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ]);
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      search(db, "query", embedConfig, { signal: controller.signal }),
+    ).rejects.toThrow();
+
+    // Not one network call for a search that was dead on arrival.
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("stops at the checkpoint when aborted during the query embed", async () => {
+    const controller = new AbortController();
+
+    // What a real aborted fetch does: reject. Both in-flight requests see it.
+    vi.mocked(fetch).mockImplementation(async () => {
+      controller.abort();
+      throw abortError();
+    });
+
+    await expect(
+      search(db, "query", embedConfig, { signal: controller.signal }),
+    ).rejects.toThrow();
+  });
+
+  it("does not leave the embedding promise unhandled when it bails at a checkpoint", async () => {
+    // The rewrite resolves, the embed rejects. `search` awaits the *rewrite*
+    // first, so the abort checkpoint after it throws while the embed promise is
+    // still in flight — and that promise is now guaranteed to reject. Without a
+    // handler attached at creation, this is an unhandledRejection in main, which
+    // is a process-level event no try/catch here can see.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const controller = new AbortController();
+      vi.mocked(fetch).mockImplementation(async () => {
+        controller.abort();
+        throw abortError();
+      });
+
+      await expect(
+        // 4+ words and a question word, so the rewrite path actually runs.
+        search(db, "what is the design review", embedConfig, {
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow();
+
+      // Let the microtask queue drain — unhandledRejection fires a tick later.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("rethrows an abort during rerank instead of degrading to rerankFailed", async () => {
+    const controller = new AbortController();
+    const mockFetch = vi.mocked(fetch);
+
+    // The embed succeeds; the rerank is aborted mid-flight.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: { float: [[1, 0, 0]] } }),
+    } as Response);
+    mockFetch.mockImplementationOnce(async () => {
+      controller.abort();
+      throw abortError();
+    });
+
+    // Reporting `rerankFailed` here would hand back results for a query the user
+    // already replaced, under a warning about a fault that never happened.
+    await expect(
+      search(db, "query", embedConfig, { signal: controller.signal }),
+    ).rejects.toThrow();
+  });
+
+  it("still degrades to rerankFailed when the rerank fails for real", async () => {
+    const controller = new AbortController();
+    const mockFetch = vi.mocked(fetch);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: { float: [[1, 0, 0]] } }),
+    } as Response);
+    mockFetch.mockRejectedValueOnce(new Error("Rerank service down"));
+
+    // The signal is live and un-aborted — the guard must key on *our* signal, not
+    // on the error, or the rerank's own 15s timeout would start throwing too.
+    const response = await search(db, "query", embedConfig, {
+      signal: controller.signal,
+    });
+    expect(response.rerankFailed).toBe(true);
+    expect(response.results).toHaveLength(1);
+  });
+
+  it("leaves the connection writable after an aborted search", async () => {
+    upsertChunks(
+      db,
+      Array.from({ length: 1200 }, (_, i) => ({
+        id: `big-${i}`,
+        documentId: "d1",
+        chunkIndex: i + 1,
+        heading: null,
+        text: `chunk ${i}`,
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "embed-v4.0",
+        tokenCount: 2,
+        createdAt: "2024-01-01T00:00:00Z",
+      })),
+    );
+
+    const controller = new AbortController();
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: { float: [[1, 0, 0]] } }),
+    } as Response);
+
+    const promise = search(db, "query", embedConfig, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(promise).rejects.toThrow();
+
+    // better-sqlite3 marks the whole connection busy while an iterator is open and
+    // rejects every write on it. So a chunk write landing cleanly is the proof
+    // that the scan's iterator was closed on the way out — if `for…of` ever stops
+    // calling .return() on the generator, syncing breaks, not searching, and this
+    // is the test that says so.
+    expect(() =>
+      upsertChunks(db, [
+        {
+          id: "after",
+          documentId: "d1",
+          chunkIndex: 9999,
+          heading: null,
+          text: "written after the aborted search",
+          embedding: makeEmbedding([0, 1, 0]),
+          embeddingModel: "embed-v4.0",
+          tokenCount: 4,
+          createdAt: "2024-01-01T00:00:00Z",
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("leaves the connection writable after the scan stops at its bound", async () => {
+    upsertChunks(
+      db,
+      Array.from({ length: 20 }, (_, i) => ({
+        id: `b-${i}`,
+        documentId: "d1",
+        chunkIndex: i + 1,
+        heading: null,
+        text: `chunk ${i}`,
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "embed-v4.0",
+        tokenCount: 2,
+        createdAt: "2024-01-01T00:00:00Z",
+      })),
+    );
+
+    const mockFetch = vi.mocked(fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: { float: [[1, 0, 0]] } }),
+    } as Response);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [{ index: 0, relevance_score: 0.9 }] }),
+    } as Response);
+
+    // `break` is the other abrupt exit from the for…of, and the other way to
+    // abandon an iterator: hitting maxScan with rows still unread.
+    await search(db, "query", embedConfig, { maxScan: 5 });
+
+    expect(() =>
+      upsertChunks(db, [
+        {
+          id: "after-bound",
+          documentId: "d1",
+          chunkIndex: 9999,
+          heading: null,
+          text: "written after a truncated scan",
+          embedding: makeEmbedding([0, 1, 0]),
+          embeddingModel: "embed-v4.0",
+          tokenCount: 4,
+          createdAt: "2024-01-01T00:00:00Z",
+        },
+      ]),
+    ).not.toThrow();
+  });
+});

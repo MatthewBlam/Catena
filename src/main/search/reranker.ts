@@ -11,7 +11,14 @@ export async function rerank(
   candidates: { id: string; text: string }[],
   apiKey: string,
   topN = 8,
+  signal?: AbortSignal,
 ): Promise<{ id: string; score: number }[]> {
+  // The timeout is still ours; the caller's signal is additive. Either one firing
+  // aborts the request, and `reason` says which — a distinction the caller needs,
+  // since a timeout degrades to unranked results but a cancel must not.
+  const signals = [AbortSignal.timeout(RERANK_TIMEOUT_MS)];
+  if (signal) signals.push(signal);
+
   const res = await fetch("https://api.cohere.com/v2/rerank", {
     method: "POST",
     headers: {
@@ -24,7 +31,7 @@ export async function rerank(
       documents: candidates.map((c) => c.text),
       top_n: topN,
     }),
-    signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
+    signal: AbortSignal.any(signals),
   });
 
   if (!res.ok)

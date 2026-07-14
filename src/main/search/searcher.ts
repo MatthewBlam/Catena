@@ -105,6 +105,8 @@ export interface SearchOptions {
    * exercised without seeding a quarter of a million chunks.
    */
   maxScan?: number;
+  /** Cancels the search. A superseded query holds a SQLite iterator open. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -113,6 +115,22 @@ export interface SearchOptions {
  * ~6 KB a chunk, so its 10k cap was already a 61 MB allocation per search, and
  * the cap was the only thing keeping that number from growing with the corpus.
  * Memory here is O(K), so the cap can go.
+ *
+ * This function is synchronous, and must stay that way. Two reasons, both load-bearing:
+ *
+ *  1. better-sqlite3 marks the *connection* busy for as long as an iterator is
+ *     open, and refuses every write on it — "This database connection is busy
+ *     executing a query". Staying synchronous means the iterator opens and closes
+ *     within a single turn of the event loop, so it can never overlap a sync
+ *     writing chunks. Yield anywhere in this loop and a background sync starts
+ *     failing.
+ *  2. Which is also why there is no abort check in here, tempting as it looks: a
+ *     synchronous loop cannot be interrupted. `controller.abort()` is a JS call
+ *     and needs the event loop we are holding, so `signal.aborted` physically
+ *     cannot flip between two iterations. A check here would be a comforting no-op.
+ *
+ * Cancellation therefore happens at the async boundaries — the rewrite, the query
+ * embed, the rerank — which is where a search spends its time anyway.
  */
 function scanVectors(
   db: Database.Database,
@@ -123,6 +141,11 @@ function scanVectors(
   const top: Scored[] = [];
   let scanned = 0;
 
+  // `for…of` calls .return() on the generator on *any* abrupt exit — the `break`
+  // below, or a throw out of cosineSimilarity — and that is what closes the
+  // underlying statement. Do not rewrite this as a manual .next() loop without
+  // closing the iterator yourself: an abandoned one leaves the connection busy
+  // and every subsequent write fails.
   for (const chunk of iterateChunksWithEmbeddingsByModel(db, model)) {
     scanned++;
     const score = cosineSimilarity(
@@ -142,13 +165,26 @@ export async function search(
   embedConfig: EmbedConfig,
   options: SearchOptions = {},
 ): Promise<SearchResponse> {
-  const { maxScan = MAX_SCAN } = options;
+  const { maxScan = MAX_SCAN, signal } = options;
+  signal?.throwIfAborted();
 
-  const embeddingPromise = embedQuery(query, embedConfig);
-  const rewritten = await rewriteQuery(query, embedConfig);
+  // Kicked off before the rewrite so the two run concurrently.
+  const embeddingPromise = embedQuery(query, embedConfig, signal);
+  // …which means there is a window where we can leave without awaiting it: the
+  // checkpoint below, or a throw out of searchFts. Once the signal reaches
+  // embedQuery, an abort makes that rejection a *certainty*, and an un-awaited
+  // rejection in the main process is an unhandledRejection. Attaching a handler
+  // now marks it handled; the `await` below is still the one that matters.
+  void embeddingPromise.catch(() => {});
+
+  const rewritten = await rewriteQuery(query, embedConfig, signal);
+  // rewriteQuery swallows its own abort and hands back the original query, so
+  // this checkpoint — not the rewrite — is what stops a cancelled search.
+  signal?.throwIfAborted();
 
   const ftsResults = searchFts(db, rewritten, FTS_TOP_K);
   const queryEmbedding = await embeddingPromise;
+  signal?.throwIfAborted();
 
   const model = getEmbeddingModelName(embedConfig);
   const { top: vectorScored, scanned } = scanVectors(
@@ -190,6 +226,7 @@ export async function search(
         candidates,
         embedConfig.apiKey!,
         RESULT_LIMIT,
+        signal,
       );
       console.log(
         `Rerank: ${candidates.length} candidates → ${reranked.length} results (top score: ${reranked[0]?.score.toFixed(3) ?? "n/a"})`,
@@ -201,6 +238,12 @@ export async function search(
         })
         .filter((e): e is NonNullable<typeof e> => e !== null);
     } catch (err) {
+      // A cancelled search is not a degraded search. Swallowing the abort here
+      // would return results for a query the user has already replaced, flagged
+      // "reranking unavailable" — a warning about a fault that does not exist.
+      // Checked on our own signal, not the error name: the 15s rerank timeout
+      // aborts too, and *that* one really is a rerank failure.
+      if (signal?.aborted) throw err;
       console.warn("Rerank failed:", err instanceof Error ? err.message : err);
       rerankFailed = true;
       topResults = merged.slice(0, RESULT_LIMIT);

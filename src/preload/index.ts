@@ -17,6 +17,7 @@ const api = {
     ipcRenderer.invoke("app:open-external", url),
   search: (query: string): Promise<import("../shared/types").SearchResponse> =>
     ipcRenderer.invoke("search:query", query),
+  cancelSearch: (): Promise<void> => ipcRenderer.invoke("search:cancel"),
   startNotionOAuth: (): Promise<{ workspaceName: string }> =>
     ipcRenderer.invoke("auth:notion-oauth-start"),
   cancelNotionOAuth: (): Promise<void> =>

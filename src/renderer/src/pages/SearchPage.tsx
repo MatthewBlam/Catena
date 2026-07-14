@@ -36,6 +36,15 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
       .catch(() => {});
   }, [visible]);
 
+  // Unmounting leaves any in-flight search with no consumer — but it is still
+  // holding a SQLite iterator open on the main thread. (App swaps this page out
+  // wholesale when the provider is reset, so this is a live path, not a formality.)
+  useEffect(() => {
+    return () => {
+      window.api.cancelSearch().catch(() => {});
+    };
+  }, []);
+
   const handleSearch = useCallback(async (searchQuery?: string) => {
     const q = (searchQuery ?? queryRef.current).trim();
     if (!q) return;
@@ -50,7 +59,9 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
 
     try {
       const response = await window.api.search(q);
-      if (id !== requestIdRef.current) return;
+      // `cancelled` means main abandoned this query — it carries no results and
+      // is not an error. Dropping it is the whole point of the flag.
+      if (id !== requestIdRef.current || response.cancelled) return;
       setResults(response.results);
       setRerankFailed(response.rerankFailed);
       setLastRewritten(response.rewrittenQuery ?? null);

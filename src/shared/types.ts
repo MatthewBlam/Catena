@@ -66,6 +66,13 @@ export interface SearchResponse {
    * Silent truncation is the bug; the renderer must say so.
    */
   truncated?: { scanned: number; total: number };
+  /**
+   * The query was cancelled or superseded; the renderer must drop this response
+   * rather than render it or show an error. A flag rather than a rejection
+   * because an Error's `name` does not survive IPC serialization, so the renderer
+   * could not otherwise tell an abort from a real failure.
+   */
+  cancelled?: boolean;
 }
 
 export interface SyncProgress {

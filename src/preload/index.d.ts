@@ -9,6 +9,11 @@ interface CommonsAPI {
   setEmbeddingProvider(provider: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   search(query: string): Promise<import("../shared/types").SearchResponse>;
+  /**
+   * Abandons this window's in-flight search. Issuing a new query already
+   * supersedes the old one, so this is for leaving the search behind entirely.
+   */
+  cancelSearch(): Promise<void>;
   startNotionOAuth(): Promise<{ workspaceName: string }>;
   cancelNotionOAuth(): Promise<void>;
   listNotionPages(): Promise<import("../shared/types").NotionItemSummary[]>;

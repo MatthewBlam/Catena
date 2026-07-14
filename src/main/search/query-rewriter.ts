@@ -40,9 +40,17 @@ function wordCount(query: string): number {
   return query.split(/\s+/).filter(Boolean).length;
 }
 
+/** Our timeout, plus the caller's cancellation if it gave us one. */
+function withTimeout(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const signals = [AbortSignal.timeout(timeoutMs)];
+  if (signal) signals.push(signal);
+  return AbortSignal.any(signals);
+}
+
 async function rewriteWithCohere(
   query: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const res = await fetch("https://api.cohere.com/v2/chat", {
     method: "POST",
@@ -57,7 +65,7 @@ async function rewriteWithCohere(
         { role: "user", content: query },
       ],
     }),
-    signal: AbortSignal.timeout(COHERE_TIMEOUT_MS),
+    signal: withTimeout(COHERE_TIMEOUT_MS, signal),
   });
 
   if (!res.ok) return null;
@@ -73,6 +81,7 @@ async function rewriteWithCohere(
 async function rewriteWithOllama(
   query: string,
   model: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const res = await fetch("http://localhost:11434/api/generate", {
     method: "POST",
@@ -83,7 +92,7 @@ async function rewriteWithOllama(
       prompt: query,
       stream: false,
     }),
-    signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
+    signal: withTimeout(OLLAMA_TIMEOUT_MS, signal),
   });
 
   if (!res.ok) return null;
@@ -94,9 +103,17 @@ async function rewriteWithOllama(
   return text;
 }
 
+/**
+ * Never throws — a rewrite is an optimization, and a failed one must not take the
+ * search down with it. That includes an *abort*: a cancelled rewrite returns the
+ * original query, and the caller's own abort checkpoint is what actually stops the
+ * search. Passing the signal here still matters, because it releases the in-flight
+ * request instead of leaving it to run out its 3-second timeout.
+ */
 export async function rewriteQuery(
   query: string,
   embedConfig: EmbedConfig,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (wordCount(query) <= 3 || !isQuestionQuery(query)) {
     return query;
@@ -104,19 +121,26 @@ export async function rewriteQuery(
 
   try {
     if (embedConfig.apiKey) {
-      const result = await rewriteWithCohere(query, embedConfig.apiKey);
+      const result = await rewriteWithCohere(query, embedConfig.apiKey, signal);
       if (result) return result;
       return query;
     }
 
     const primaryModel = embedConfig.ollamaModel;
     if (primaryModel) {
-      const result = await rewriteWithOllama(query, primaryModel);
+      const result = await rewriteWithOllama(query, primaryModel, signal);
       if (result) return result;
     }
 
+    // A cancelled search must not fall through to a second model.
+    if (signal?.aborted) return query;
+
     if (primaryModel !== OLLAMA_FALLBACK_MODEL) {
-      const result = await rewriteWithOllama(query, OLLAMA_FALLBACK_MODEL);
+      const result = await rewriteWithOllama(
+        query,
+        OLLAMA_FALLBACK_MODEL,
+        signal,
+      );
       if (result) return result;
     }
   } catch {

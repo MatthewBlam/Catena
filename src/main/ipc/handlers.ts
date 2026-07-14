@@ -60,6 +60,13 @@ function isSafeUrl(url: string): boolean {
   }
 }
 
+/**
+ * The in-flight search per renderer, so a new query can supersede the one it
+ * replaced. Keyed by `event.sender.id` rather than held as a single global: two
+ * windows search independently, and one must never cancel the other.
+ */
+const activeSearches = new Map<number, AbortController>();
+
 export function registerIpcHandlers(): void {
   ipcMain.handle("secrets:save", (_, key: string, value: string) => {
     if (!ALLOWED_SECRET_KEYS.has(key))
@@ -191,19 +198,52 @@ export function registerIpcHandlers(): void {
     return listDriveItems(client, parentId);
   });
 
-  ipcMain.handle("search:query", async (_, query: string) => {
+  ipcMain.handle("search:query", async (event, query: string) => {
+    const senderId = event.sender.id;
+
+    // A new query supersedes the old one. Keyed by sender, not globally, so one
+    // window searching does not cancel another's.
+    activeSearches.get(senderId)?.abort();
+    const controller = new AbortController();
+    activeSearches.set(senderId, controller);
+
     const db = getDb();
     const embedConfig = buildEmbedConfig(db);
     const startMs = Date.now();
-    const response = await search(db, query, embedConfig);
-    track("commons_search_executed", {
-      result_count: response.results.length,
-      rerank_failed: response.rerankFailed,
-      query_rewritten: !!response.rewrittenQuery,
-      embedding_provider: embedConfig.provider,
-      duration_ms: Date.now() - startMs,
-    });
-    return response;
+
+    try {
+      const response = await search(db, query, embedConfig, {
+        signal: controller.signal,
+      });
+      track("commons_search_executed", {
+        result_count: response.results.length,
+        rerank_failed: response.rerankFailed,
+        query_rewritten: !!response.rewrittenQuery,
+        embedding_provider: embedConfig.provider,
+        duration_ms: Date.now() - startMs,
+      });
+      return response;
+    } catch (err) {
+      // Resolve rather than reject: an Error's `name` does not survive IPC, so a
+      // rejecting abort is indistinguishable from a real failure and the renderer
+      // would show an error banner for a query the user themselves replaced.
+      // No `track` either — a cancelled search never ran, and counting it would
+      // post a 0-result search event for every superseded keystroke.
+      if (controller.signal.aborted) {
+        return { results: [], rerankFailed: false, cancelled: true };
+      }
+      throw err;
+    } finally {
+      // Only if we still own the entry. A superseding query has already installed
+      // its own controller, and deleting that would leave it uncancellable.
+      if (activeSearches.get(senderId) === controller) {
+        activeSearches.delete(senderId);
+      }
+    }
+  });
+
+  ipcMain.handle("search:cancel", (event) => {
+    activeSearches.get(event.sender.id)?.abort();
   });
 
   ipcMain.handle("sources:list", () => {
