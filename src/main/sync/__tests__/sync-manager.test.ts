@@ -7,8 +7,14 @@ import {
   getChunksByDocumentId,
   getDocumentByExternalId,
   getIncrementalSyncMap,
+  searchFts,
 } from "../../db/database";
-import { syncSource, type Connector, type RawDocument } from "../sync-manager";
+import {
+  syncSource,
+  type Connector,
+  type RawDocument,
+  type SyncWalkResult,
+} from "../sync-manager";
 import type { EmbedConfig } from "../../search/embedder";
 import type { SyncProgress } from "../../../shared/types";
 
@@ -22,16 +28,39 @@ vi.mock("../../search/embedder", () => ({
   ),
 }));
 
-function makeConnector(docs: RawDocument[]): Connector {
+/**
+ * By default the connector reports that it saw exactly what it yielded, on a
+ * complete walk — so reconciliation is live in every test unless a test opts out.
+ * `walk` overrides that: a real connector's seen-set is wider than its yields
+ * (unchanged and unparseable documents are seen but not yielded), and a pruned
+ * walk reports `complete: false`.
+ */
+function makeConnector(
+  docs: RawDocument[],
+  walk?: Partial<SyncWalkResult>,
+): Connector {
   return {
-    async *fetchDocuments(
-      _signal?: AbortSignal,
-      _knownDocs?: Map<string, string>,
-    ) {
+    async *fetchDocuments(): AsyncGenerator<RawDocument, SyncWalkResult> {
       for (const doc of docs) {
         yield doc;
       }
+      return {
+        seenExternalIds:
+          walk?.seenExternalIds ?? new Set(docs.map((d) => d.externalId)),
+        complete: walk?.complete ?? true,
+      };
     },
+  };
+}
+
+function doc(externalId: string, content: string): RawDocument {
+  return {
+    externalId,
+    title: `Doc ${externalId}`,
+    url: null,
+    mimeType: null,
+    modifiedAt: null,
+    content,
   };
 }
 
@@ -220,9 +249,11 @@ describe("syncSource", () => {
     let yielded = 0;
 
     const connector: Connector = {
-      async *fetchDocuments() {
+      async *fetchDocuments(): AsyncGenerator<RawDocument, SyncWalkResult> {
+        const seenExternalIds = new Set<string>();
         for (let i = 0; i < 10; i++) {
           yielded++;
+          seenExternalIds.add(`doc-${i}`);
           yield {
             externalId: `doc-${i}`,
             title: `Doc ${i}`,
@@ -233,6 +264,7 @@ describe("syncSource", () => {
           };
           if (yielded === 2) controller.abort();
         }
+        return { seenExternalIds, complete: true };
       },
     };
 
@@ -488,16 +520,21 @@ describe("syncSource", () => {
     await syncSource(db, "src-1", "notion", connector1, testConfig, () => {});
 
     const progress: SyncProgress[] = [];
-    const connector2 = makeConnector([
-      {
-        externalId: "doc-3",
-        title: "Doc 3",
-        url: null,
-        mimeType: null,
-        modifiedAt: null,
-        content: "# Heading\nNew content.",
-      },
-    ]);
+    const connector2 = makeConnector(
+      [
+        {
+          externalId: "doc-3",
+          title: "Doc 3",
+          url: null,
+          mimeType: null,
+          modifiedAt: null,
+          content: "# Heading\nNew content.",
+        },
+      ],
+      // doc-1 and doc-2 were skipped as unchanged, not deleted — a real connector
+      // still walks past them and reports them as seen.
+      { seenExternalIds: new Set(["doc-1", "doc-2", "doc-3"]) },
+    );
 
     await syncSource(db, "src-1", "notion", connector2, testConfig, (p) =>
       progress.push(p),
@@ -565,5 +602,427 @@ describe("syncSource", () => {
       const firstThreeSpread = callTimestamps[2] - callTimestamps[0];
       expect(firstThreeSpread).toBeLessThan(50);
     }
+  });
+});
+
+describe("content-hash invariant (C2)", () => {
+  let db: Database.Database;
+
+  beforeEach(async () => {
+    const embedder = await import("../../search/embedder");
+    (embedder.embedDocuments as ReturnType<typeof vi.fn>).mockImplementation(
+      async (texts: string[]) =>
+        texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    (
+      embedder.getEmbeddingModelName as ReturnType<typeof vi.fn>
+    ).mockReturnValue("embed-v4.0");
+    (embedder.embeddingToBuffer as ReturnType<typeof vi.fn>).mockImplementation(
+      (emb: Float32Array) =>
+        Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength),
+    );
+
+    db = createTestDb();
+    insertSource(db, {
+      id: "src-1",
+      provider: "notion",
+      name: "Test Source",
+      rootExternalId: "ext-root",
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => db.close());
+
+  it("does not commit content_hash when embedding fails", async () => {
+    const { embedDocuments } = await import("../../search/embedder");
+    (embedDocuments as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Cohere rate limit"),
+    );
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", "# Heading\nBody text.")]),
+      testConfig,
+      () => {},
+    );
+
+    const row = getDocumentByExternalId(db, "src-1", "d1");
+    expect(row?.syncStatus).toBe("error");
+    expect(row?.contentHash).toBeNull();
+  });
+
+  /**
+   * The C2 proof. A 429 during the first sync used to commit the hash with zero
+   * chunks; every later sync then saw a matching hash and skipped the document
+   * forever. No amount of re-syncing brought it back.
+   */
+  it("re-embeds after a failed sync even when the content is unchanged", async () => {
+    const { embedDocuments } = await import("../../search/embedder");
+    const content = "# Heading\nBody text that must end up searchable.";
+
+    (embedDocuments as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Cohere rate limit"),
+    );
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", content)]),
+      testConfig,
+      () => {},
+    );
+    expect(getDocumentByExternalId(db, "src-1", "d1")?.syncStatus).toBe(
+      "error",
+    );
+
+    (embedDocuments as ReturnType<typeof vi.fn>).mockClear();
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", content)]),
+      testConfig,
+      () => {},
+    );
+
+    expect(embedDocuments).toHaveBeenCalled();
+    const row = getDocumentByExternalId(db, "src-1", "d1");
+    expect(row?.syncStatus).toBe("synced");
+    expect(row?.contentHash).toBeTruthy();
+    expect(getChunksByDocumentId(db, row!.id).length).toBeGreaterThan(0);
+    expect(searchFts(db, "searchable", 10).length).toBeGreaterThan(0);
+  });
+
+  it("does not write chunks when the embedder returns holes", async () => {
+    const { embedDocuments } = await import("../../search/embedder");
+    // A sparse array — exactly what the old embedder produced on abort.
+    (embedDocuments as ReturnType<typeof vi.fn>).mockImplementation(
+      async (texts: string[]) => {
+        const holed = new Array<Float32Array>(texts.length);
+        holed[0] = new Float32Array([0.1, 0.2, 0.3]);
+        return holed;
+      },
+    );
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([
+        doc("d1", "# A\nFirst section.\n\n# B\nSecond section body."),
+      ]),
+      testConfig,
+      () => {},
+    );
+
+    const row = getDocumentByExternalId(db, "src-1", "d1");
+    expect(row?.syncStatus).toBe("error");
+    expect(row?.contentHash).toBeNull();
+    expect(getChunksByDocumentId(db, row!.id)).toHaveLength(0);
+  });
+
+  it("commits the hash for a document that produces zero chunks", async () => {
+    const { embedDocuments } = await import("../../search/embedder");
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", "   ")]),
+      testConfig,
+      () => {},
+    );
+
+    const row = getDocumentByExternalId(db, "src-1", "d1");
+    expect(row?.syncStatus).toBe("synced");
+    expect(row?.contentHash).toBeTruthy();
+    expect(getChunksByDocumentId(db, row!.id)).toHaveLength(0);
+
+    // An empty document must short-circuit next time, not be re-fetched forever.
+    (embedDocuments as ReturnType<typeof vi.fn>).mockClear();
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", "   ")]),
+      testConfig,
+      () => {},
+    );
+    expect(embedDocuments).toHaveBeenCalledTimes(0);
+  });
+
+  it("clears the chunks of a document that was emptied upstream", async () => {
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", "# Heading\nZebra content.")]),
+      testConfig,
+      () => {},
+    );
+    expect(searchFts(db, "zebra", 10)).toHaveLength(1);
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", "")]),
+      testConfig,
+      () => {},
+    );
+
+    const row = getDocumentByExternalId(db, "src-1", "d1");
+    expect(row?.syncStatus).toBe("synced");
+    expect(getChunksByDocumentId(db, row!.id)).toHaveLength(0);
+    expect(searchFts(db, "zebra", 10)).toHaveLength(0);
+  });
+
+  it("leaves a cancelled document pending with no hash, not errored", async () => {
+    const { embedDocuments } = await import("../../search/embedder");
+    const controller = new AbortController();
+    (embedDocuments as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        controller.abort();
+        throw new DOMException("Aborted", "AbortError");
+      },
+    );
+
+    const progress: SyncProgress[] = [];
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d1", "# Heading\nBody text.")]),
+      testConfig,
+      (p) => progress.push(p),
+      controller.signal,
+    );
+
+    const row = getDocumentByExternalId(db, "src-1", "d1");
+    expect(row?.syncStatus).toBe("pending");
+    expect(row?.contentHash).toBeNull();
+    // Cancelling is not a document failure.
+    expect(progress[progress.length - 1].errors).toHaveLength(0);
+  });
+});
+
+describe("reconcileDeletedDocuments (H5)", () => {
+  let db: Database.Database;
+
+  beforeEach(async () => {
+    const embedder = await import("../../search/embedder");
+    (embedder.embedDocuments as ReturnType<typeof vi.fn>).mockImplementation(
+      async (texts: string[]) =>
+        texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    (
+      embedder.getEmbeddingModelName as ReturnType<typeof vi.fn>
+    ).mockReturnValue("embed-v4.0");
+    (embedder.embeddingToBuffer as ReturnType<typeof vi.fn>).mockImplementation(
+      (emb: Float32Array) =>
+        Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength),
+    );
+
+    db = createTestDb();
+    insertSource(db, {
+      id: "src-1",
+      provider: "notion",
+      name: "Test Source",
+      rootExternalId: "ext-root",
+      createdAt: new Date().toISOString(),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  async function seed(count: number): Promise<void> {
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector(
+        Array.from({ length: count }, (_, i) =>
+          doc(`d${i}`, `# Heading ${i}\nZebra content number ${i}.`),
+        ),
+      ),
+      testConfig,
+      () => {},
+    );
+  }
+
+  it("deletes documents the provider no longer returns", async () => {
+    await seed(3);
+    const gone = getDocumentByExternalId(db, "src-1", "d2")!;
+
+    const progress: SyncProgress[] = [];
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d0", "# Heading 0\nZebra content number 0.")], {
+        seenExternalIds: new Set(["d0", "d1"]),
+      }),
+      testConfig,
+      (p) => progress.push(p),
+    );
+
+    expect(
+      getDocumentsBySourceId(db, "src-1").map((d) => d.externalId),
+    ).toEqual(expect.arrayContaining(["d0", "d1"]));
+    expect(getDocumentByExternalId(db, "src-1", "d2")).toBeNull();
+
+    // The chunks and the FTS index must go with it, or search keeps serving a
+    // document the user can no longer open.
+    expect(getChunksByDocumentId(db, gone.id)).toHaveLength(0);
+    expect(
+      searchFts(db, "zebra", 10).every((c) => c.documentId !== gone.id),
+    ).toBe(true);
+
+    const last = progress[progress.length - 1];
+    expect(last.deleted).toBe(1);
+    expect(progress.some((p) => p.phase === "reconciling")).toBe(true);
+  });
+
+  it("does not delete when the walk was incomplete", async () => {
+    await seed(3);
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([], { seenExternalIds: new Set(["d0"]), complete: false }),
+      testConfig,
+      () => {},
+    );
+
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(3);
+  });
+
+  it("does not delete when the sync was cancelled", async () => {
+    await seed(3);
+    const controller = new AbortController();
+    controller.abort();
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([], { seenExternalIds: new Set(["d0"]) }),
+      testConfig,
+      () => {},
+      controller.signal,
+    );
+
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(3);
+  });
+
+  it("does not delete documents that were skipped as unchanged", async () => {
+    await seed(3);
+    const { embedDocuments } = await import("../../search/embedder");
+    (embedDocuments as ReturnType<typeof vi.fn>).mockClear();
+
+    // A real incremental sync: nothing changed, so the connector yields nothing —
+    // but it walked past all three and reports them as seen.
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([], { seenExternalIds: new Set(["d0", "d1", "d2"]) }),
+      testConfig,
+      () => {},
+    );
+
+    expect(embedDocuments).not.toHaveBeenCalled();
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(3);
+  });
+
+  it("refuses to delete more than half of a source", async () => {
+    await seed(20);
+
+    const progress: SyncProgress[] = [];
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([], {
+        seenExternalIds: new Set(["d0", "d1", "d2", "d3", "d4"]),
+      }),
+      testConfig,
+      (p) => progress.push(p),
+    );
+
+    // Losing access to a workspace looks exactly like deleting it. Keep the docs.
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(20);
+
+    const last = progress[progress.length - 1];
+    expect(last.deleted).toBe(0);
+    expect(last.errors).toHaveLength(1);
+    expect(last.errors[0]).toContain("15 of 20");
+  });
+
+  it("still deletes when a small source loses most of its documents", async () => {
+    await seed(4);
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([], { seenExternalIds: new Set(["d0"]) }),
+      testConfig,
+      () => {},
+    );
+
+    // Under 10 documents a ratio means nothing, so the guard stays out of the way.
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(1);
+  });
+
+  it("does not block reconciliation because a document failed to embed", async () => {
+    await seed(3);
+    const { embedDocuments } = await import("../../search/embedder");
+    (embedDocuments as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Cohere rate limit"),
+    );
+
+    await syncSource(
+      db,
+      "src-1",
+      "notion",
+      makeConnector([doc("d0", "# Heading 0\nChanged content for zero.")], {
+        seenExternalIds: new Set(["d0", "d1"]),
+      }),
+      testConfig,
+      () => {},
+    );
+
+    // d0 failed to embed but was still *seen*, so it is not a deletion candidate.
+    expect(getDocumentByExternalId(db, "src-1", "d0")?.syncStatus).toBe(
+      "error",
+    );
+    expect(getDocumentByExternalId(db, "src-1", "d2")).toBeNull();
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(2);
+  });
+
+  it("survives a connector that throws mid-walk without deleting anything", async () => {
+    await seed(3);
+
+    const connector: Connector = {
+      // eslint-disable-next-line require-yield
+      async *fetchDocuments(): AsyncGenerator<RawDocument, SyncWalkResult> {
+        throw new Error("Notion 500");
+      },
+    };
+
+    await expect(
+      syncSource(db, "src-1", "notion", connector, testConfig, () => {}),
+    ).rejects.toThrow("Notion 500");
+
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(3);
   });
 });

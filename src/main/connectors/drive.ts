@@ -1,6 +1,10 @@
 import { drive_v3 } from "@googleapis/drive";
 import type { GoogleOAuth2Client } from "../auth/google-oauth";
-import type { Connector, RawDocument } from "../sync/sync-manager";
+import type {
+  Connector,
+  RawDocument,
+  SyncWalkResult,
+} from "../sync/sync-manager";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const MAX_PDF_PAGES = 200;
@@ -14,6 +18,10 @@ export class DriveConnector implements Connector {
   private drive: drive_v3.Drive;
   private folderId: string;
   private lastRequestTime = 0;
+
+  /** Accumulated across the whole walk and reported once, from `fetchDocuments`. */
+  private seen = new Set<string>();
+  private complete = true;
 
   constructor(auth: GoogleOAuth2Client, folderId: string) {
     this.drive = new drive_v3.Drive({ auth });
@@ -48,22 +56,30 @@ export class DriveConnector implements Connector {
   }
 
   async *fetchDocuments(
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
     knownDocs?: Map<string, string>,
-  ): AsyncGenerator<RawDocument> {
+  ): AsyncGenerator<RawDocument, SyncWalkResult> {
+    this.seen = new Set();
+    this.complete = true;
     if (this.folderId === SHARED_WITH_ME_ID) {
-      yield* this.walkSharedWithMe(knownDocs);
+      yield* this.walkSharedWithMe(knownDocs, signal);
     } else {
-      yield* this.walkFolder(this.folderId, 0, new Set(), knownDocs);
+      yield* this.walkFolder(this.folderId, 0, new Set(), knownDocs, signal);
     }
+    return { seenExternalIds: this.seen, complete: this.complete };
   }
 
   private async *walkSharedWithMe(
     knownDocs?: Map<string, string>,
+    signal?: AbortSignal,
   ): AsyncGenerator<RawDocument> {
     const visited = new Set<string>();
     let pageToken: string | undefined;
     do {
+      if (signal?.aborted) {
+        this.complete = false;
+        return;
+      }
       const res = await this.rateLimited(() =>
         this.drive.files.list({
           q: "sharedWithMe = true and trashed = false",
@@ -76,7 +92,13 @@ export class DriveConnector implements Connector {
         }),
       );
 
-      yield* this.processFiles(res.data.files ?? [], 0, visited, knownDocs);
+      yield* this.processFiles(
+        res.data.files ?? [],
+        0,
+        visited,
+        knownDocs,
+        signal,
+      );
       pageToken = res.data.nextPageToken ?? undefined;
     } while (pageToken);
   }
@@ -86,8 +108,14 @@ export class DriveConnector implements Connector {
     depth: number,
     visited: Set<string>,
     knownDocs?: Map<string, string>,
+    signal?: AbortSignal,
   ): AsyncGenerator<RawDocument> {
-    if (depth >= MAX_DEPTH || visited.has(folderId)) return;
+    // Already walked: dedupe, not incompleteness.
+    if (visited.has(folderId)) return;
+    if (signal?.aborted || depth >= MAX_DEPTH) {
+      this.complete = false;
+      return;
+    }
     visited.add(folderId);
 
     let pageToken: string | undefined;
@@ -104,8 +132,20 @@ export class DriveConnector implements Connector {
         }),
       );
 
-      yield* this.processFiles(res.data.files ?? [], depth, visited, knownDocs);
+      yield* this.processFiles(
+        res.data.files ?? [],
+        depth,
+        visited,
+        knownDocs,
+        signal,
+      );
       pageToken = res.data.nextPageToken ?? undefined;
+
+      if (signal?.aborted && pageToken) {
+        // Files we never paginated to are unseen, not deleted.
+        this.complete = false;
+        return;
+      }
     } while (pageToken);
   }
 
@@ -114,13 +154,27 @@ export class DriveConnector implements Connector {
     depth: number,
     visited: Set<string>,
     knownDocs?: Map<string, string>,
+    signal?: AbortSignal,
   ): AsyncGenerator<RawDocument> {
     for (const file of files) {
-      if (!file.id || !file.name) continue;
+      if (signal?.aborted) {
+        this.complete = false;
+        return;
+      }
+      if (!file.id) continue;
+
       if (file.mimeType === "application/vnd.google-apps.folder") {
-        yield* this.walkFolder(file.id, depth + 1, visited, knownDocs);
+        yield* this.walkFolder(file.id, depth + 1, visited, knownDocs, signal);
         continue;
       }
+
+      // Record it here, above every skip. A file that is too big, unparseable,
+      // an unsupported type, or simply unchanged since the last sync is a file
+      // that demonstrably *exists* — and reconciliation deletes whatever it did
+      // not see. Adding it after the skips would delete the user's 60 MB PDFs.
+      this.seen.add(file.id);
+
+      if (!file.name) continue;
       if (file.size && Number(file.size) > MAX_FILE_SIZE) continue;
       if (
         knownDocs &&

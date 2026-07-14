@@ -10,6 +10,19 @@ import {
   listNotionItems,
   NotionConnector,
 } from "../notion";
+import type { Connector, SyncWalkResult } from "../../sync/sync-manager";
+
+/** Runs a walk to completion and hands back what the connector reported about it. */
+async function drainWalk(
+  connector: Connector,
+  signal?: AbortSignal,
+): Promise<SyncWalkResult> {
+  const gen = connector.fetchDocuments(signal);
+  for (;;) {
+    const next = await gen.next();
+    if (next.done) return next.value;
+  }
+}
 
 function makeRichText(text: string): RichTextItemResponse[] {
   return [
@@ -517,6 +530,89 @@ describe("NotionConnector", () => {
 
     expect(docs).toHaveLength(2);
     expect(docs[1].title).toBe("DB Entry");
+  });
+});
+
+describe("NotionConnector walk result", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reports the ids it saw, in the same form it yields them", async () => {
+    // The trap: listNotionItems strips dashes before storing root_external_id, but
+    // child ids come back from the API with dashes — so documents.external_id
+    // holds both forms. The seen-set must be built from the same expression that
+    // becomes externalId. Normalizing here would make every child look deleted.
+    const childId = "11111111-2222-3333-4444-555555555555";
+    mockClient.pages.retrieve.mockImplementation(
+      ({ page_id }: { page_id: string }) =>
+        Promise.resolve(makePage(page_id, `Page ${page_id}`)),
+    );
+    mockClient.blocks.children.list.mockImplementation(
+      ({ block_id }: { block_id: string }) =>
+        Promise.resolve({
+          results:
+            block_id === "abc123"
+              ? [
+                  makeBlock("paragraph", { rich_text: makeRichText("Root") }),
+                  {
+                    ...makeBlock("child_page", { title: "Child" }),
+                    type: "child_page",
+                    id: childId,
+                  },
+                ]
+              : [makeBlock("paragraph", { rich_text: makeRichText("Child") })],
+          has_more: false,
+          next_cursor: null,
+        }),
+    );
+
+    const connector = new NotionConnector("test-token", "abc123", 0);
+    const walk = await drainWalk(connector);
+
+    expect(walk.complete).toBe(true);
+    expect([...walk.seenExternalIds].sort()).toEqual(
+      ["abc123", childId].sort(),
+    );
+  });
+
+  it("marks the walk incomplete when a database is forbidden", async () => {
+    mockClient.pages.retrieve.mockResolvedValue(makePage("root", "Root"));
+    mockClient.blocks.children.list.mockResolvedValue({
+      results: [
+        {
+          ...makeBlock("child_database", { title: "Forbidden DB" }),
+          type: "child_database",
+          id: "db-forbidden",
+        },
+      ],
+      has_more: false,
+      next_cursor: null,
+    });
+    mockClient.databases.retrieve.mockRejectedValue(
+      Object.assign(new Error("Forbidden"), { status: 403 }),
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const walk = await drainWalk(new NotionConnector("test-token", "root", 0));
+
+    // We could not look inside that database. Its pages are unseen, not deleted —
+    // and an incomplete walk must never authorize a deletion.
+    expect(walk.complete).toBe(false);
+    expect(walk.seenExternalIds.has("root")).toBe(true);
+  });
+
+  it("marks the walk incomplete when aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    mockClient.pages.retrieve.mockResolvedValue(makePage("root", "Root"));
+
+    const walk = await drainWalk(
+      new NotionConnector("test-token", "root", 0),
+      controller.signal,
+    );
+
+    expect(walk.complete).toBe(false);
   });
 });
 

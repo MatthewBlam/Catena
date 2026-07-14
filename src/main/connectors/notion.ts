@@ -11,7 +11,11 @@ import type {
   PageObjectResponse,
   RichTextItemResponse,
 } from "@notionhq/client/build/src/api-endpoints";
-import type { Connector, RawDocument } from "../sync/sync-manager";
+import type {
+  Connector,
+  RawDocument,
+  SyncWalkResult,
+} from "../sync/sync-manager";
 import type { NotionItemSummary } from "../../shared/types";
 
 const MAX_DEPTH = 10;
@@ -24,6 +28,10 @@ export class NotionConnector implements Connector {
   private lastRequestTime = 0;
   private throttleMs: number;
 
+  /** Accumulated across the whole walk and reported once, from `fetchDocuments`. */
+  private seen = new Set<string>();
+  private complete = true;
+
   constructor(
     token: string,
     rootPageId: string,
@@ -35,10 +43,13 @@ export class NotionConnector implements Connector {
   }
 
   async *fetchDocuments(
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
     knownDocs?: Map<string, string>,
-  ): AsyncGenerator<RawDocument> {
-    yield* this.walkPage(this.rootPageId, 0, new Set(), knownDocs);
+  ): AsyncGenerator<RawDocument, SyncWalkResult> {
+    this.seen = new Set();
+    this.complete = true;
+    yield* this.walkPage(this.rootPageId, 0, new Set(), knownDocs, signal);
+    return { seenExternalIds: this.seen, complete: this.complete };
   }
 
   private async *walkPage(
@@ -46,9 +57,23 @@ export class NotionConnector implements Connector {
     depth: number,
     visited: Set<string>,
     knownDocs?: Map<string, string>,
+    signal?: AbortSignal,
   ): AsyncGenerator<RawDocument> {
-    if (depth > MAX_DEPTH || visited.has(pageId)) return;
+    // Already walked: dedupe, not incompleteness. We have seen this page.
+    if (visited.has(pageId)) return;
+    if (signal?.aborted || depth > MAX_DEPTH) {
+      this.complete = false;
+      return;
+    }
     visited.add(pageId);
+
+    // `pageId` — the *exact* expression that becomes `externalId` below. Do not
+    // normalize it. The root arrives dash-stripped (listNotionItems strips them
+    // before storing sources.root_external_id) while child ids come back from the
+    // API with dashes, so documents.external_id legitimately holds both forms.
+    // Normalizing here would make every child look unseen, and reconciliation
+    // would delete the entire corpus.
+    this.seen.add(pageId);
 
     const page = (await this.rateLimited(() =>
       this.client.pages.retrieve({ page_id: pageId }),
@@ -75,12 +100,22 @@ export class NotionConnector implements Connector {
     }
 
     for (const block of blocks) {
+      if (signal?.aborted) {
+        this.complete = false;
+        return;
+      }
       if (block.type === "child_page") {
-        yield* this.walkPage(block.id, depth + 1, visited, knownDocs);
+        yield* this.walkPage(block.id, depth + 1, visited, knownDocs, signal);
       }
       if (block.type === "child_database") {
         try {
-          yield* this.walkDatabase(block.id, depth + 1, visited, knownDocs);
+          yield* this.walkDatabase(
+            block.id,
+            depth + 1,
+            visited,
+            knownDocs,
+            signal,
+          );
         } catch (err) {
           const status =
             err instanceof Object && "status" in err
@@ -90,6 +125,8 @@ export class NotionConnector implements Connector {
             console.warn(
               `Skipping database ${block.id}: ${status} (not shared or not found)`,
             );
+            // A subtree we could not look at. Its pages are unseen but not gone.
+            this.complete = false;
             continue;
           }
           throw err;
@@ -103,8 +140,12 @@ export class NotionConnector implements Connector {
     depth: number,
     visited: Set<string>,
     knownDocs?: Map<string, string>,
+    signal?: AbortSignal,
   ): AsyncGenerator<RawDocument> {
-    if (depth > MAX_DEPTH) return;
+    if (signal?.aborted || depth > MAX_DEPTH) {
+      this.complete = false;
+      return;
+    }
 
     const dataSourceId = await this.resolveDataSourceId(databaseId);
 
@@ -120,13 +161,25 @@ export class NotionConnector implements Connector {
 
       for (const result of response.results) {
         if ("url" in result) {
-          yield* this.walkPage(result.id, depth + 1, visited, knownDocs);
+          yield* this.walkPage(
+            result.id,
+            depth + 1,
+            visited,
+            knownDocs,
+            signal,
+          );
         }
       }
 
       cursor = response.has_more
         ? (response.next_cursor ?? undefined)
         : undefined;
+
+      if (signal?.aborted && cursor) {
+        // Pages we never paginated to are unseen, not deleted.
+        this.complete = false;
+        return;
+      }
     } while (cursor);
   }
 

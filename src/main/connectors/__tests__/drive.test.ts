@@ -2,7 +2,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { drive_v3 } from "@googleapis/drive";
 import { DriveConnector, extractFolderIdFromUrl } from "../drive";
 import type { GoogleOAuth2Client } from "../../auth/google-oauth";
-import type { RawDocument } from "../../sync/sync-manager";
+import type {
+  Connector,
+  RawDocument,
+  SyncWalkResult,
+} from "../../sync/sync-manager";
+
+/** Runs a walk to completion and hands back what the connector reported about it. */
+async function drainWalk(
+  connector: Connector,
+  knownDocs?: Map<string, string>,
+): Promise<SyncWalkResult> {
+  const gen = connector.fetchDocuments(undefined, knownDocs);
+  for (;;) {
+    const next = await gen.next();
+    if (next.done) return next.value;
+  }
+}
 
 /** DriveConnector only forwards this to `new drive_v3.Drive({ auth })`, which is mocked below. */
 const fakeAuth = {} as unknown as GoogleOAuth2Client;
@@ -507,5 +523,84 @@ describe("DriveConnector", () => {
 
     expect(docs).toHaveLength(1);
     expect(docs[0].content).toBe("Extracted DOCX text");
+  });
+});
+
+describe("DriveConnector walk result", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  /**
+   * The whole point of the seen-set. Reconciliation deletes whatever the walk did
+   * not see, so a file we merely *declined to index* — too big, unparseable, or
+   * unchanged since last sync — must still be reported. Recording it after the
+   * skips instead of before would quietly delete every oversized PDF the user has.
+   */
+  it("reports files it skipped, because a skipped file still exists", async () => {
+    mockFilesList.mockResolvedValue({
+      data: {
+        files: [
+          makeDriveFile({ id: "too-big", size: String(60 * 1024 * 1024) }),
+          makeDriveFile({ id: "unsupported", mimeType: "image/png" }),
+          makeDriveFile({ id: "unparseable" }),
+          makeDriveFile({ id: "unchanged" }),
+          makeDriveFile({ id: "indexed" }),
+        ],
+        nextPageToken: undefined,
+      },
+    });
+    mockFilesExport.mockImplementation(({ fileId }: { fileId: string }) => {
+      if (fileId === "unparseable") return Promise.reject(new Error("boom"));
+      return Promise.resolve({ data: "Some content" });
+    });
+
+    const knownDocs = new Map([["unchanged", "2025-06-01T00:00:00.000Z"]]);
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+
+    const docs: RawDocument[] = [];
+    const gen = connector.fetchDocuments(undefined, knownDocs);
+    let walk: SyncWalkResult;
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) {
+        walk = next.value;
+        break;
+      }
+      docs.push(next.value);
+    }
+
+    expect(docs.map((d) => d.externalId)).toEqual(["indexed"]);
+    expect([...walk.seenExternalIds].sort()).toEqual([
+      "indexed",
+      "too-big",
+      "unchanged",
+      "unparseable",
+      "unsupported",
+    ]);
+    expect(walk.complete).toBe(true);
+  });
+
+  it("marks the walk incomplete when the depth cap prunes a subtree", async () => {
+    // Every folder contains one more folder, forever — so the cap always bites.
+    let n = 0;
+    mockFilesList.mockImplementation(() =>
+      Promise.resolve({
+        data: {
+          files: [
+            makeDriveFile({
+              id: `folder-${++n}`,
+              mimeType: "application/vnd.google-apps.folder",
+            }),
+          ],
+          nextPageToken: undefined,
+        },
+      }),
+    );
+
+    const walk = await drainWalk(new DriveConnector(fakeAuth, "root"));
+
+    expect(walk.complete).toBe(false);
   });
 });

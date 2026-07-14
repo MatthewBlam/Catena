@@ -50,10 +50,19 @@ export interface SearchResponse {
 
 export interface SyncProgress {
   sourceId: string;
-  phase: "fetching" | "chunking" | "embedding" | "storing" | "done" | "error";
+  phase:
+    | "fetching"
+    | "chunking"
+    | "embedding"
+    | "storing"
+    | "reconciling"
+    | "done"
+    | "error";
   current: number;
   skipped: number;
   total: number;
+  /** Documents removed because the provider no longer has them. */
+  deleted: number;
   currentDocTitle: string | null;
   errors: string[];
 }
