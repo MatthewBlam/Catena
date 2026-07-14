@@ -349,6 +349,12 @@ export function registerSyncHandlers(): void {
           phase: syncState.thrown !== undefined ? "error" : "done",
           embedding_provider: embedConfig.provider,
         });
+      } catch (err) {
+        // Best-effort bookkeeping. On quit, `will-quit` closes the database
+        // without waiting for the unwind, so this write lands on a closed
+        // connection — and an epilogue that throws would replace the sync's
+        // real result with an exception about recording it.
+        console.error(`Failed to record sync outcome for ${sourceId}:`, err);
       } finally {
         finish();
         // The row's sync state just changed, however it ended. Tell every

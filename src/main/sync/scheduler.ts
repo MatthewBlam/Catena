@@ -25,7 +25,20 @@ class SyncScheduler {
   private intervalMs = DEFAULT_INTERVAL_MS;
   private lastSyncedAt: string | null = null;
 
+  /**
+   * Bumped by every `stop()`. A tick captures it on entry, and anything it does
+   * afterwards — continuing the loop, writing back state in its `finally` — is
+   * conditional on still owning the current generation. Without it, a tick that
+   * was told to stop keeps running, and its `finally` clobbers the state of
+   * whatever tick started after it.
+   */
+  private generation = 0;
+
   start(db: Database.Database): void {
+    // Idempotent restart: a second `start()` must not leave the first one's
+    // interval, abort controller, or in-flight tick attached.
+    this.stop();
+
     this.db = db;
     this.enabled = getSetting(db, "auto_sync_enabled") === "true";
     this.intervalMs =
@@ -67,6 +80,14 @@ class SyncScheduler {
     this.abortController?.abort();
     this.abortController = null;
     this.db = null;
+
+    // `running` used to stay true for the whole unwind window, which had two
+    // consequences: `getState().syncing` lied, and a `start()` inside that
+    // window hit `if (this.running) return` and silently skipped its first
+    // tick. The scheduler is stopped the moment it is told to stop; the tick
+    // that is still unwinding belongs to the previous generation now.
+    this.running = false;
+    this.generation++;
   }
 
   getState(): SchedulerState {
@@ -99,6 +120,7 @@ class SyncScheduler {
     this.running = true;
     this.abortController = new AbortController();
     const { signal } = this.abortController;
+    const gen = this.generation;
     let anySuccess = false;
 
     try {
@@ -106,7 +128,10 @@ class SyncScheduler {
       const embedConfig = buildEmbedConfig(db);
 
       for (const source of sources) {
-        if (signal.aborted) break;
+        // `signal.aborted` covers a stop that reached us; `gen` covers a
+        // stop-then-start, where a *new* controller has replaced ours and the
+        // old signal will never fire again.
+        if (signal.aborted || gen !== this.generation) break;
         if (activeSyncs.has(source.id)) continue;
 
         const { controller, finish } = registerSync(source.id);
@@ -163,6 +188,14 @@ class SyncScheduler {
               phase: syncState.thrown !== undefined ? "error" : "done",
               embedding_provider: embedConfig.provider,
             });
+          } catch (err) {
+            // Best-effort bookkeeping. On quit the database is closed without
+            // waiting for this unwind, and the tick is a floating promise — an
+            // epilogue that throws here becomes an unhandled rejection.
+            console.error(
+              `Failed to record sync outcome for source ${source.id}:`,
+              err,
+            );
           } finally {
             finish();
             broadcastSourcesChanged();
@@ -170,12 +203,19 @@ class SyncScheduler {
         }
       }
     } finally {
-      if (anySuccess) {
-        this.lastSyncedAt = new Date().toISOString();
-        upsertSetting(db, "auto_sync_last_synced_at", this.lastSyncedAt);
+      // A tick from a previous generation owns none of this any more. `stop()`
+      // already set `running = false`, and a tick that started after us may now
+      // own `abortController` — nulling it here would make the live tick
+      // un-abortable. `db` is the one we captured, which `stop()` has since
+      // released, so we must not write through it either.
+      if (gen === this.generation) {
+        if (anySuccess) {
+          this.lastSyncedAt = new Date().toISOString();
+          upsertSetting(db, "auto_sync_last_synced_at", this.lastSyncedAt);
+        }
+        this.running = false;
+        this.abortController = null;
       }
-      this.running = false;
-      this.abortController = null;
     }
   }
 }
