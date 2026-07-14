@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
-import { runMigrations } from "../../db/migrations";
+import type Database from "better-sqlite3";
+import { createTestDb } from "../../db/__tests__/test-db";
 
 vi.mock("electron", () => ({
   safeStorage: {
@@ -16,10 +16,7 @@ describe("SecureStorage", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
 
   afterEach(() => db.close());

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
-import { runMigrations } from "../../db/migrations";
+import type Database from "better-sqlite3";
+import { createTestDb } from "../../db/__tests__/test-db";
 import { insertSource, insertDocument, upsertChunks } from "../../db/database";
 import { embeddingToBuffer } from "../embedder";
 import { cosineSimilarity, search } from "../searcher";
@@ -51,10 +51,7 @@ describe("search", () => {
   const embedConfig: EmbedConfig = { provider: "cohere", apiKey: "test-key" };
 
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
 
     insertSource(db, {
       id: "s1",

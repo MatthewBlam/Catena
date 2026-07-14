@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import Database from "better-sqlite3";
-import { runMigrations } from "../../db/migrations";
+import type Database from "better-sqlite3";
+import { createTestDb } from "../../db/__tests__/test-db";
 import {
   insertSource,
   getDocumentsBySourceId,
@@ -54,10 +54,7 @@ describe("syncSource", () => {
         Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength),
     );
 
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
 
     insertSource(db, {
       id: "src-1",

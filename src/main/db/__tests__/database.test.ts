@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { runMigrations } from "../migrations";
+import { createTestDb, createUnmigratedTestDb } from "./test-db";
 import {
   insertSource,
   getSourceById,
@@ -27,9 +28,7 @@ describe("migrations", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
+    db = createUnmigratedTestDb();
   });
 
   afterEach(() => db.close());
@@ -110,10 +109,7 @@ describe("migrations", () => {
 describe("sources", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
@@ -153,10 +149,7 @@ describe("sources", () => {
 describe("documents", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
     insertSource(db, {
       id: "s1",
       provider: "notion",
@@ -228,10 +221,7 @@ describe("documents", () => {
 describe("settings", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
@@ -302,10 +292,7 @@ function seedFixtures(db: Database.Database): void {
 describe("getStorageStats", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
@@ -324,10 +311,7 @@ describe("getStorageStats", () => {
 describe("clearAllData", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
@@ -346,10 +330,7 @@ describe("clearAllData", () => {
 describe("getEmbeddingHealth", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
@@ -372,10 +353,7 @@ describe("getEmbeddingHealth", () => {
 describe("replaceChunksForDocument", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
     seedFixtures(db);
   });
   afterEach(() => db.close());
@@ -410,10 +388,7 @@ describe("replaceChunksForDocument", () => {
 describe("insertDocument ON CONFLICT preserves chunks", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
     seedFixtures(db);
   });
   afterEach(() => db.close());
@@ -450,10 +425,7 @@ describe("insertDocument ON CONFLICT preserves chunks", () => {
 describe("getAllSourcesWithCounts", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
@@ -481,10 +453,7 @@ describe("getAllSourcesWithCounts", () => {
 describe("getSourceByProviderAndRoot", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
     seedFixtures(db);
   });
   afterEach(() => db.close());
@@ -505,10 +474,7 @@ describe("getSourceByProviderAndRoot", () => {
 describe("getChunkCountByModel", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = new Database(":memory:");
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    runMigrations(db);
+    db = createTestDb();
   });
   afterEach(() => db.close());
 
