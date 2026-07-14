@@ -30,7 +30,13 @@ import { listDriveItems } from "../connectors/drive";
 import { getEmbeddingModelName } from "../search/embedder";
 import type { EmbedConfig } from "../search/embedder";
 import type { SourceConfig } from "../../shared/types";
-import { cancelSync, cancelAllSyncs, buildEmbedConfig } from "./sync-handlers";
+import {
+  cancelSync,
+  cancelAllSyncs,
+  buildEmbedConfig,
+  broadcastSourcesChanged,
+  getActiveSyncProgress,
+} from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
 import {
   track,
@@ -204,6 +210,16 @@ export function registerIpcHandlers(): void {
     return getAllSourcesWithCounts(getDb());
   });
 
+  // Lives here, not in sync-handlers, purely to avoid an import cycle:
+  // scheduler.ts already imports from sync-handlers.ts, so sync-handlers.ts
+  // cannot import the scheduler back. This module already depends on both.
+  ipcMain.handle("sync:get-active", () => {
+    return {
+      active: getActiveSyncProgress(),
+      scheduler: syncScheduler.getState(),
+    };
+  });
+
   ipcMain.handle("documents:list-by-source", (_, sourceId: string) => {
     return getDocumentsBySourceId(getDb(), sourceId);
   });
@@ -239,6 +255,7 @@ export function registerIpcHandlers(): void {
     }
 
     track("commons_source_added", { source_provider: provider });
+    broadcastSourcesChanged();
 
     // Read it back rather than reconstructing it: the row carries sync-state
     // columns now, and a hand-built object would quietly omit them.
@@ -253,6 +270,7 @@ export function registerIpcHandlers(): void {
     // it hits a dangling foreign key, so wait for the unwind to finish first.
     await cancelSync(id);
     deleteSource(db, id);
+    broadcastSourcesChanged();
     if (source) {
       track("commons_source_removed", { source_provider: source.provider });
     }
@@ -290,6 +308,10 @@ export function registerIpcHandlers(): void {
     // `clearAllData` just wiped the `auto_sync_*` settings; the stopped
     // scheduler is still holding the old values in memory.
     syncScheduler.start(db);
+
+    // Every source is gone. Not in the plan's list, but the renderer's copy of
+    // `sources:list` is exactly as stale here as it is after a single removal.
+    broadcastSourcesChanged();
   });
 
   ipcMain.handle("embedding:health", () => {

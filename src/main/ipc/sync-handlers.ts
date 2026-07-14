@@ -1,4 +1,4 @@
-import { ipcMain, type WebContents } from "electron";
+import { ipcMain, BrowserWindow } from "electron";
 import { getDb } from "../db/singleton";
 import {
   getSourceById,
@@ -78,6 +78,12 @@ export function registerSync(sourceId: string): {
     controller,
     finish: () => {
       activeSyncs.delete(sourceId);
+      // The end of the sync is what clears the progress entry — not a terminal
+      // phase, which a sync that died in `getConnectorForSource` never emits.
+      // Keying the cleanup on the phase leaked the entry, and the next sync of
+      // this source would then hydrate a mounting renderer with the *previous*
+      // run's progress.
+      lastProgressBySource.delete(sourceId);
       deferred.resolve();
     },
   };
@@ -104,6 +110,80 @@ export async function cancelSync(sourceId: string): Promise<void> {
  */
 export async function cancelAllSyncs(): Promise<void> {
   await Promise.all([...activeSyncs.keys()].map((id) => cancelSync(id)));
+}
+
+/**
+ * The last progress event seen for each running sync, so a renderer that mounts
+ * mid-sync can be told what it missed.
+ *
+ * Cleared by `finish()` — the end of the sync — and, as an optimization, by a
+ * terminal phase. It must be the former: a sync that dies in
+ * `getConnectorForSource` never emits a terminal phase at all. And
+ * `getActiveSyncProgress` reads through `activeSyncs`, the real authority on
+ * whether a sync is running, so nothing here can be reported after its sync.
+ */
+const lastProgressBySource = new Map<string, SyncProgress>();
+
+function broadcast(channel: string, payload?: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.webContents.send(channel, payload);
+    } catch {
+      // Window torn down between the check and the send.
+    }
+  }
+}
+
+/**
+ * The one path progress takes to the renderer.
+ *
+ * It used to take two, and both were wrong: `sync:start` sent only to
+ * `event.sender`, so a second window saw nothing; the scheduler resolved
+ * `getAllWindows()[0]` *before* starting a sync, so a window opened during a
+ * twenty-minute sync saw nothing either — and if that first window had closed,
+ * progress went nowhere at all.
+ */
+export function publishSyncProgress(progress: SyncProgress): void {
+  if (progress.phase === "done" || progress.phase === "error") {
+    lastProgressBySource.delete(progress.sourceId);
+  } else {
+    lastProgressBySource.set(progress.sourceId, progress);
+  }
+  broadcast("sync:progress", progress);
+}
+
+/**
+ * Tells every window that `sources:list` is stale.
+ *
+ * This is what actually closes the desync: the renderer refetches the sources —
+ * which now carry `lastSyncStatus` and `lastSyncError` — instead of trying to
+ * reconstruct state from a progress stream it may never have received. The
+ * terminal progress event becomes an optimization, not the source of truth.
+ */
+export function broadcastSourcesChanged(): void {
+  broadcast("sources:changed");
+}
+
+/** Progress for every sync running right now, for a renderer that just mounted. */
+export function getActiveSyncProgress(): SyncProgress[] {
+  return [...activeSyncs.keys()].map(
+    (sourceId) =>
+      // A sync that is registered but still inside `getConnectorForSource` — a
+      // Google token refresh is a network round-trip — has not emitted anything
+      // yet. Reporting nothing for it would let the renderer offer a "Sync"
+      // button that can only fail with "sync already in progress".
+      lastProgressBySource.get(sourceId) ?? {
+        sourceId,
+        phase: "fetching",
+        current: 0,
+        skipped: 0,
+        total: 0,
+        deleted: 0,
+        currentDocTitle: null,
+        errors: [],
+      },
+  );
 }
 
 /** Enough to diagnose the failure; not enough to turn the column into a log file. */
@@ -211,7 +291,7 @@ export async function getConnectorForSource(
 }
 
 export function registerSyncHandlers(): void {
-  ipcMain.handle("sync:start", async (event, sourceId: string) => {
+  ipcMain.handle("sync:start", async (_event, sourceId: string) => {
     const db = getDb();
     const source = getSourceById(db, sourceId);
     if (!source) throw new Error(`Source not found: ${sourceId}`);
@@ -236,7 +316,6 @@ export function registerSyncHandlers(): void {
 
     try {
       const connector = await getConnectorForSource(db, source);
-      const sender: WebContents = event.sender;
 
       await syncSource(
         db,
@@ -246,11 +325,7 @@ export function registerSyncHandlers(): void {
         embedConfig,
         (progress) => {
           syncState.lastProgress = progress;
-          try {
-            sender.send("sync:progress", progress);
-          } catch {
-            // sender destroyed between check and send
-          }
+          publishSyncProgress(progress);
         },
         controller.signal,
       );
@@ -276,6 +351,9 @@ export function registerSyncHandlers(): void {
         });
       } finally {
         finish();
+        // The row's sync state just changed, however it ended. Tell every
+        // window to refetch rather than trusting them to have followed along.
+        broadcastSourcesChanged();
       }
     }
   });

@@ -62,6 +62,17 @@ const api = {
   },
   cancelSync: (sourceId: string): Promise<void> =>
     ipcRenderer.invoke("sync:cancel", sourceId),
+  getActiveSyncs: (): Promise<import("../shared/types").ActiveSyncs> =>
+    ipcRenderer.invoke("sync:get-active"),
+  onSourcesChanged: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback();
+    };
+    ipcRenderer.on("sources:changed", handler);
+    return () => {
+      ipcRenderer.removeListener("sources:changed", handler);
+    };
+  },
   getStorageStats: (): Promise<import("../shared/types").StorageStats> =>
     ipcRenderer.invoke("app:storage-stats"),
   clearAllData: (): Promise<void> => ipcRenderer.invoke("app:clear-all-data"),
@@ -72,12 +83,8 @@ const api = {
     ipcRenderer.invoke("secrets:delete", key),
   hasSecret: (key: string): Promise<boolean> =>
     ipcRenderer.invoke("secrets:has", key),
-  getAutoSync: (): Promise<{
-    enabled: boolean;
-    intervalMs: number;
-    lastSyncedAt: string | null;
-    syncing: boolean;
-  }> => ipcRenderer.invoke("settings:get-auto-sync"),
+  getAutoSync: (): Promise<import("../shared/types").SchedulerState> =>
+    ipcRenderer.invoke("settings:get-auto-sync"),
   setAutoSyncEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke("settings:set-auto-sync-enabled", enabled),
   setAutoSyncInterval: (ms: number): Promise<void> =>

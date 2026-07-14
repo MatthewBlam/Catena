@@ -1,10 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 
+interface FakeWindow {
+  destroyed: boolean;
+  isDestroyed: () => boolean;
+  webContents: { send: ReturnType<typeof vi.fn> };
+}
+
+const h = vi.hoisted(() => ({ windows: [] as unknown[] }));
 vi.mock("electron", () => ({
   ipcMain: { handle: vi.fn() },
-  BrowserWindow: { getAllWindows: () => [] },
+  BrowserWindow: { getAllWindows: () => h.windows },
 }));
+
+function fakeWindow(): FakeWindow {
+  const win: FakeWindow = {
+    destroyed: false,
+    isDestroyed: () => win.destroyed,
+    webContents: { send: vi.fn() },
+  };
+  return win;
+}
 
 import {
   activeSyncs,
@@ -12,6 +28,9 @@ import {
   cancelSync,
   cancelAllSyncs,
   recordSyncOutcome,
+  publishSyncProgress,
+  broadcastSourcesChanged,
+  getActiveSyncProgress,
   type SyncOutcomeInput,
 } from "../sync-handlers";
 import { createTestDb } from "../../db/__tests__/test-db";
@@ -47,6 +66,7 @@ function fakeSync(sourceId: string): {
 
 beforeEach(() => {
   activeSyncs.clear();
+  h.windows = [];
   vi.useRealTimers();
 });
 
@@ -276,5 +296,130 @@ describe("recordSyncOutcome (H3)", () => {
   it("does not throw when the source was removed mid-sync", () => {
     db.prepare("DELETE FROM sources WHERE id = ?").run("s1");
     expect(() => recordSyncOutcome(db, "s1", outcome({}), false)).not.toThrow();
+  });
+});
+
+describe("progress broadcast and hydration (H7)", () => {
+  const makeProgress = (o: Partial<SyncProgress> = {}): SyncProgress => ({
+    sourceId: "s1",
+    phase: "embedding",
+    current: 3,
+    skipped: 0,
+    total: 10,
+    deleted: 0,
+    currentDocTitle: "Bylaws",
+    errors: [],
+    ...o,
+  });
+
+  it("sends progress to every window, not just the one that started the sync", () => {
+    const a = fakeWindow();
+    const b = fakeWindow();
+    h.windows = [a, b];
+
+    const p = makeProgress();
+    publishSyncProgress(p);
+
+    // `sync:start` used to send only to `event.sender`, so a second window
+    // watched a sync it could not see.
+    expect(a.webContents.send).toHaveBeenCalledWith("sync:progress", p);
+    expect(b.webContents.send).toHaveBeenCalledWith("sync:progress", p);
+  });
+
+  it("reaches a window that opened after the sync began", () => {
+    const first = fakeWindow();
+    h.windows = [first];
+    publishSyncProgress(makeProgress({ current: 1 }));
+
+    // The scheduler used to resolve `getAllWindows()[0]` once, before the sync,
+    // and hold that WebContents for the whole run.
+    const late = fakeWindow();
+    h.windows = [first, late];
+    publishSyncProgress(makeProgress({ current: 2 }));
+
+    expect(late.webContents.send).toHaveBeenCalledTimes(1);
+    expect(late.webContents.send).toHaveBeenCalledWith(
+      "sync:progress",
+      expect.objectContaining({ current: 2 }),
+    );
+  });
+
+  it("skips destroyed windows", () => {
+    const gone = fakeWindow();
+    gone.destroyed = true;
+    const live = fakeWindow();
+    h.windows = [gone, live];
+
+    publishSyncProgress(makeProgress());
+    broadcastSourcesChanged();
+
+    expect(gone.webContents.send).not.toHaveBeenCalled();
+    expect(live.webContents.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("broadcasts sources:changed to every window", () => {
+    const a = fakeWindow();
+    const b = fakeWindow();
+    h.windows = [a, b];
+
+    broadcastSourcesChanged();
+
+    expect(a.webContents.send).toHaveBeenCalledWith(
+      "sources:changed",
+      undefined,
+    );
+    expect(b.webContents.send).toHaveBeenCalledWith(
+      "sources:changed",
+      undefined,
+    );
+  });
+
+  it("replays the last progress event to a renderer that mounts mid-sync", async () => {
+    const sync = fakeSync("s1");
+    publishSyncProgress(makeProgress({ current: 7 }));
+
+    const active = getActiveSyncProgress();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sourceId: "s1", current: 7 });
+
+    sync.release();
+    await sync.ran;
+  });
+
+  it("reports a sync that has not emitted anything yet", async () => {
+    // Registered, but still inside `getConnectorForSource` — a Google token
+    // refresh is a network round-trip. Reporting nothing here would let the
+    // renderer offer a Sync button whose only possible outcome is the
+    // "sync already in progress" error.
+    const sync = fakeSync("s1");
+
+    const active = getActiveSyncProgress();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sourceId: "s1", phase: "fetching" });
+
+    sync.release();
+    await sync.ran;
+  });
+
+  it("reports nothing once the sync is over", async () => {
+    const sync = fakeSync("s1");
+    publishSyncProgress(makeProgress({ current: 7 }));
+    publishSyncProgress(makeProgress({ phase: "done" }));
+    sync.release();
+    await sync.ran;
+
+    expect(getActiveSyncProgress()).toEqual([]);
+  });
+
+  it("does not resurrect a finished sync from a stale progress entry", async () => {
+    // A terminal phase clears the entry, but `activeSyncs` is the authority:
+    // even if a non-terminal event were the last one seen — a sync killed
+    // between "storing" and "done" — the sync is over and must not be replayed.
+    const sync = fakeSync("s1");
+    publishSyncProgress(makeProgress({ phase: "storing" }));
+    sync.release();
+    await sync.ran;
+
+    expect(getActiveSyncProgress()).toEqual([]);
   });
 });

@@ -1,15 +1,17 @@
-import { BrowserWindow } from "electron";
 import type Database from "better-sqlite3";
 import { getAllSources, getSetting, upsertSetting } from "../db/database";
 import {
   activeSyncs,
+  broadcastSourcesChanged,
   buildEmbedConfig,
   getConnectorForSource,
+  publishSyncProgress,
   recordSyncOutcome,
   registerSync,
   type SyncOutcomeInput,
 } from "../ipc/sync-handlers";
 import { syncSource } from "./sync-manager";
+import type { SchedulerState } from "../../shared/types";
 import { track } from "../telemetry/posthog";
 
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
@@ -67,12 +69,7 @@ class SyncScheduler {
     this.db = null;
   }
 
-  getState(): {
-    enabled: boolean;
-    intervalMs: number;
-    lastSyncedAt: string | null;
-    syncing: boolean;
-  } {
+  getState(): SchedulerState {
     return {
       enabled: this.enabled,
       intervalMs: this.intervalMs,
@@ -130,7 +127,6 @@ class SyncScheduler {
 
         try {
           const connector = await getConnectorForSource(db, source);
-          const sender = BrowserWindow.getAllWindows()[0]?.webContents;
           await syncSource(
             db,
             source.id,
@@ -139,11 +135,7 @@ class SyncScheduler {
             embedConfig,
             (progress) => {
               syncState.lastProgress = progress;
-              try {
-                sender?.send("sync:progress", progress);
-              } catch {
-                // sender destroyed
-              }
+              publishSyncProgress(progress);
             },
             controller.signal,
           );
@@ -173,6 +165,7 @@ class SyncScheduler {
             });
           } finally {
             finish();
+            broadcastSourcesChanged();
           }
         }
       }

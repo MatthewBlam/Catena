@@ -32,17 +32,16 @@ interface CommonsAPI {
     callback: (progress: import("../shared/types").SyncProgress) => void,
   ): () => void;
   cancelSync(sourceId: string): Promise<void>;
+  /** What is running right now — for a renderer that mounted mid-sync. */
+  getActiveSyncs(): Promise<import("../shared/types").ActiveSyncs>;
+  /** Fires when `sources:list` has gone stale. Refetch; do not infer. */
+  onSourcesChanged(callback: () => void): () => void;
   getStorageStats(): Promise<import("../shared/types").StorageStats>;
   clearAllData(): Promise<void>;
   checkEmbeddingHealth(): Promise<import("../shared/types").EmbeddingHealth>;
   deleteSecret(key: string): Promise<void>;
   hasSecret(key: string): Promise<boolean>;
-  getAutoSync(): Promise<{
-    enabled: boolean;
-    intervalMs: number;
-    lastSyncedAt: string | null;
-    syncing: boolean;
-  }>;
+  getAutoSync(): Promise<import("../shared/types").SchedulerState>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   setAutoSyncInterval(ms: number): Promise<void>;
   getTelemetryEnabled(): Promise<boolean>;

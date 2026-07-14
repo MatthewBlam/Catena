@@ -81,6 +81,19 @@ export interface SyncProgress {
   errors: string[];
 }
 
+export interface SchedulerState {
+  enabled: boolean;
+  intervalMs: number;
+  lastSyncedAt: string | null;
+  syncing: boolean;
+}
+
+/** What a renderer that mounted mid-sync needs in order to catch up. */
+export interface ActiveSyncs {
+  active: SyncProgress[];
+  scheduler: SchedulerState;
+}
+
 export interface EmbeddingHealth {
   provider: "cohere" | "ollama";
   model: string;
