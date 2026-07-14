@@ -1,12 +1,13 @@
 import type Database from "better-sqlite3";
-import { copyFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 
 interface Migration {
   version: number;
   statements: string[];
 }
 
-const migrations: Migration[] = [
+/** Exported for tests, which need to build a database pinned at an older version. */
+export const migrations: Migration[] = [
   {
     version: 1,
     statements: [
@@ -111,7 +112,36 @@ const migrations: Migration[] = [
         SELECT rowid, text, heading FROM chunks`,
     ],
   },
+  {
+    version: 6,
+    statements: [
+      // content_hash may only ever describe chunks that are actually in the DB.
+      // Older builds committed the hash before the embedding call succeeded, so
+      // a doc could carry a hash with zero chunks — and every later sync would
+      // see the hash match and skip it forever. Scrub those.
+      `UPDATE documents SET content_hash = NULL WHERE sync_status <> 'synced'`,
+      // Persist per-source sync outcome so failures survive the panel closing.
+      `ALTER TABLE sources ADD COLUMN last_sync_at TEXT`,
+      `ALTER TABLE sources ADD COLUMN last_sync_status TEXT`,
+      `ALTER TABLE sources ADD COLUMN last_sync_error TEXT`,
+      `ALTER TABLE sources ADD COLUMN last_sync_error_count INTEGER NOT NULL DEFAULT 0`,
+    ],
+  },
 ];
+
+const LATEST_VERSION = Math.max(...migrations.map((m) => m.version));
+
+/**
+ * VACUUM INTO, not copyFileSync: in WAL mode the recent commits live in the
+ * -wal file, so copying only the .db yields a backup that is missing them —
+ * and can be missing entire tables. VACUUM INTO writes one self-contained,
+ * transactionally consistent file.
+ */
+function backupBeforeMigration(db: Database.Database, dbPath: string): void {
+  const backupPath = `${dbPath}.pre-migration.bak`;
+  rmSync(backupPath, { force: true }); // VACUUM INTO refuses an existing target
+  db.prepare("VACUUM INTO ?").run(backupPath);
+}
 
 export function runMigrations(db: Database.Database, dbPath?: string): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
@@ -126,14 +156,29 @@ export function runMigrations(db: Database.Database, dbPath?: string): void {
   };
   const currentVersion = current?.v ?? 0;
 
-  const pending = migrations.filter((m) => m.version > currentVersion);
+  if (currentVersion > LATEST_VERSION) {
+    throw new Error(
+      `This database was created by a newer version of Commons (schema v${currentVersion}, ` +
+        `this build supports v${LATEST_VERSION}). Please update Commons.`,
+    );
+  }
+
+  const pending = migrations
+    .filter((m) => m.version > currentVersion)
+    .sort((a, b) => a.version - b.version);
   if (pending.length === 0) return;
 
+  // If we cannot take a backup, we must not run a destructive migration.
+  // Failing to start is recoverable; a half-migrated corpus with no backup is not.
   if (dbPath) {
     try {
-      copyFileSync(dbPath, `${dbPath}.pre-migration.bak`);
-    } catch {
-      // non-fatal — best-effort backup
+      backupBeforeMigration(db, dbPath);
+    } catch (err) {
+      throw new Error(
+        `Could not back up the database before upgrading it (${err instanceof Error ? err.message : String(err)}). ` +
+          `Free up disk space and reopen Commons. Your data has not been modified.`,
+        { cause: err },
+      );
     }
   }
 
