@@ -397,6 +397,39 @@ export function getIncrementalSyncMap(
   return map;
 }
 
+// --- FTS5 Search ---
+
+export function searchFts(
+  db: Database.Database,
+  query: string,
+  limit: number,
+): ChunkRow[] {
+  const tokens = query
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => `"${t.replace(/"/g, '""')}"`)
+    .join(" OR ");
+
+  if (!tokens) return [];
+
+  try {
+    const rows = db
+      .prepare(
+        `SELECT c.id, c.document_id, c.chunk_index, c.heading, c.text,
+                NULL as embedding, c.embedding_model, c.token_count, c.created_at
+         FROM chunks_fts fts
+         JOIN chunks c ON c.rowid = fts.rowid
+         WHERE chunks_fts MATCH ?
+         ORDER BY fts.rank
+         LIMIT ?`,
+      )
+      .all(tokens, limit) as ChunkDbRow[];
+    return rows.map(mapChunkRow);
+  } catch {
+    return [];
+  }
+}
+
 // --- Settings ---
 
 export function upsertSetting(

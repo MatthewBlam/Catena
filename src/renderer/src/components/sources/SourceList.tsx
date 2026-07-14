@@ -205,7 +205,7 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
           <div key={source.id}>
             <div className={`rounded-lg border border-border bg-card p-4 ${hasBottomPanel ? "rounded-b-none border-b-0" : ""}`}>
               <div className="flex items-center justify-between gap-3">
-                <button type="button" className="flex items-center cursor-pointer gap-3 min-w-0 text-left" onClick={() => !selecting && toggleExpand(source.id)} disabled={selecting}>
+                <button type="button" className="flex items-center cursor-pointer gap-3 min-w-0 text-left rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24" onClick={() => !selecting && toggleExpand(source.id)} disabled={selecting}>
                   {!selecting && <ChevronRightIcon className={`size-4 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />}
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">

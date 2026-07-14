@@ -11,6 +11,8 @@ interface SearchPageProps {
 
 export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   const [query, setQuery] = useState("");
+  const [lastQuery, setLastQuery] = useState("");
+  const [lastRewritten, setLastRewritten] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +40,8 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     const q = (searchQuery ?? queryRef.current).trim();
     if (!q) return;
 
+    setLastQuery(q);
+    setLastRewritten(null);
     setLoading(true);
     setError(null);
     setRerankFailed(false);
@@ -49,6 +53,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
       if (id !== requestIdRef.current) return;
       setResults(response.results);
       setRerankFailed(response.rerankFailed);
+      setLastRewritten(response.rewrittenQuery ?? null);
     } catch (err) {
       if (id !== requestIdRef.current) return;
       setError(err instanceof Error ? err.message : "Search failed. Try again.");
@@ -72,7 +77,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     <div className="min-h-full flex flex-col pt-3 pb-8">
       <div className="w-full max-w-3xl mx-auto px-10 mb-3">
         <h1 className="text-2xl font-semibold mb-1">Search</h1>
-        <p className="text-muted-foreground text-sm mb-6">Search your club&apos;s docs</p>
+        <p className="text-muted-foreground text-sm mb-6">Don&apos;t see what you&apos;re looking for? Try searching using keywords.</p>
         <SearchInput value={query} onChange={setQuery} onSubmit={() => handleSearch()} loading={loading} />
       </div>
 
@@ -101,6 +106,10 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
 
         {!loading && results !== null && results.length > 0 && (
           <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Results for &ldquo;{lastQuery}&rdquo;
+              {lastRewritten && <span> &mdash; searched as &ldquo;{lastRewritten}&rdquo;</span>}
+            </p>
             {results.map((result) => (
               <ResultCard key={result.chunkId} result={result} />
             ))}

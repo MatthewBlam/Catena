@@ -142,7 +142,7 @@ function App(): React.JSX.Element {
                 type="button"
                 onClick={() => handlePageChange(item.id)}
                 className={cn(
-                  "w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors",
+                  "w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/24",
                   page === item.id ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" : "text-sidebar-foreground hover:bg-sidebar-accent/50",
                 )}>
                 <item.icon className="size-4 opacity-60" />

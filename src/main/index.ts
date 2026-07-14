@@ -7,7 +7,12 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { registerSyncHandlers, cancelAllSyncs } from "./ipc/sync-handlers";
 import { syncScheduler } from "./sync/scheduler";
 import { getDb, closeDb } from "./db/singleton";
-import { resetStalePendingDocuments } from "./db/database";
+import {
+  resetStalePendingDocuments,
+  getStorageStats,
+  getSetting,
+} from "./db/database";
+import { initTelemetry, track, shutdownTelemetry } from "./telemetry/posthog";
 
 if (started) app.quit();
 
@@ -94,8 +99,23 @@ app
     const db = getDb();
     const staleCount = resetStalePendingDocuments(db);
     if (staleCount > 0) {
-      console.log(`Reset ${staleCount} stale pending documents to error status`);
+      console.log(
+        `Reset ${staleCount} stale pending documents to error status`,
+      );
     }
+
+    initTelemetry(db);
+    const stats = getStorageStats(db);
+    track("commons_app_opened", {
+      app_version: app.getVersion(),
+      platform: process.platform,
+      source_count: stats.sourceCount,
+      document_count: stats.documentCount,
+      chunk_count: stats.chunkCount,
+      embedding_provider: getSetting(db, "embedding_provider") ?? "cohere",
+      auto_sync_enabled: getSetting(db, "auto_sync_enabled") === "true",
+    });
+
     syncScheduler.start(db);
     createWindow();
 
@@ -117,5 +137,6 @@ app.on("window-all-closed", () => {
 app.on("will-quit", () => {
   cancelAllSyncs();
   syncScheduler.stop();
+  shutdownTelemetry();
   closeDb();
 });

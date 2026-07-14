@@ -9,6 +9,7 @@ import {
   getAllSourcesWithCounts,
   insertSource,
   deleteSource,
+  getSourceById,
   getSourceByProviderAndRoot,
   getDocumentsBySourceId,
   getStorageStats,
@@ -31,6 +32,12 @@ import type { EmbedConfig } from "../search/embedder";
 import type { SourceConfig } from "../../shared/types";
 import { activeSyncs, cancelAllSyncs, buildEmbedConfig } from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
+import {
+  track,
+  initTelemetry,
+  isTelemetryEnabled,
+  setTelemetryEnabled,
+} from "../telemetry/posthog";
 
 const ALLOWED_SECRET_KEYS = new Set([
   "cohere_api_key",
@@ -116,6 +123,7 @@ export function registerIpcHandlers(): void {
       throw new Error(`Invalid embedding provider: ${provider}`);
     }
     upsertSetting(getDb(), "embedding_provider", provider);
+    track("commons_embedding_provider_changed", { provider });
   });
 
   ipcMain.handle("app:open-external", async (_, url: string) => {
@@ -179,7 +187,17 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("search:query", async (_, query: string) => {
     const db = getDb();
-    return search(db, query, buildEmbedConfig(db));
+    const embedConfig = buildEmbedConfig(db);
+    const startMs = Date.now();
+    const response = await search(db, query, embedConfig);
+    track("commons_search_executed", {
+      result_count: response.results.length,
+      rerank_failed: response.rerankFailed,
+      query_rewritten: !!response.rewrittenQuery,
+      embedding_provider: embedConfig.provider,
+      duration_ms: Date.now() - startMs,
+    });
+    return response;
   });
 
   ipcMain.handle("sources:list", () => {
@@ -220,6 +238,8 @@ export function registerIpcHandlers(): void {
       });
     }
 
+    track("commons_source_added", { source_provider: provider });
+
     return {
       id,
       provider: config.provider,
@@ -231,8 +251,13 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("sources:remove", (_, id: string) => {
+    const db = getDb();
+    const source = getSourceById(db, id);
     activeSyncs.get(id)?.abort();
-    deleteSource(getDb(), id);
+    deleteSource(db, id);
+    if (source) {
+      track("commons_source_removed", { source_provider: source.provider });
+    }
   });
 
   ipcMain.handle("app:storage-stats", async () => {
@@ -249,8 +274,11 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("app:clear-all-data", () => {
+    track("commons_data_cleared");
     cancelAllSyncs();
-    clearAllData(getDb());
+    const db = getDb();
+    clearAllData(db);
+    initTelemetry(db);
   });
 
   ipcMain.handle("embedding:health", () => {
@@ -282,11 +310,23 @@ export function registerIpcHandlers(): void {
     return syncScheduler.getState();
   });
 
-  ipcMain.handle("settings:set-auto-sync-enabled", async (_, enabled: boolean) => {
-    await syncScheduler.setEnabled(enabled);
-  });
+  ipcMain.handle(
+    "settings:set-auto-sync-enabled",
+    async (_, enabled: boolean) => {
+      await syncScheduler.setEnabled(enabled);
+      track("commons_auto_sync_toggled", { enabled });
+    },
+  );
 
   ipcMain.handle("settings:set-auto-sync-interval", (_, ms: number) => {
     syncScheduler.setIntervalMs(ms);
+  });
+
+  ipcMain.handle("settings:get-telemetry-enabled", () => {
+    return isTelemetryEnabled();
+  });
+
+  ipcMain.handle("settings:set-telemetry-enabled", (_, enabled: boolean) => {
+    setTelemetryEnabled(getDb(), enabled);
   });
 }

@@ -79,6 +79,38 @@ const migrations: Migration[] = [
       `CREATE INDEX idx_chunks_embedding_model ON chunks(embedding_model) WHERE embedding IS NOT NULL`,
     ],
   },
+  {
+    version: 5,
+    statements: [
+      `CREATE VIRTUAL TABLE chunks_fts USING fts5(
+        text,
+        heading,
+        content='chunks',
+        content_rowid='rowid',
+        tokenize='porter unicode61'
+      )`,
+
+      `CREATE TRIGGER chunks_fts_ai AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, text, heading)
+        VALUES (new.rowid, new.text, new.heading);
+      END`,
+
+      `CREATE TRIGGER chunks_fts_ad AFTER DELETE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, text, heading)
+        VALUES ('delete', old.rowid, old.text, old.heading);
+      END`,
+
+      `CREATE TRIGGER chunks_fts_au AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, text, heading)
+        VALUES ('delete', old.rowid, old.text, old.heading);
+        INSERT INTO chunks_fts(rowid, text, heading)
+        VALUES (new.rowid, new.text, new.heading);
+      END`,
+
+      `INSERT INTO chunks_fts(rowid, text, heading)
+        SELECT rowid, text, heading FROM chunks`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database, dbPath?: string): void {

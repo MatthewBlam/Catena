@@ -8,6 +8,8 @@ import { NotionConnector } from "../connectors/notion";
 import { DriveConnector } from "../connectors/drive";
 import { getAuthenticatedClient, refreshIfNeeded } from "../auth/google-oauth";
 import type { EmbedConfig } from "../search/embedder";
+import type { SyncProgress } from "../../shared/types";
+import { track } from "../telemetry/posthog";
 
 export const activeSyncs = new Map<string, AbortController>();
 
@@ -75,9 +77,20 @@ export function registerSyncHandlers(): void {
     const controller = new AbortController();
     activeSyncs.set(sourceId, controller);
 
+    const embedConfig = buildEmbedConfig(db);
+    const startMs = Date.now();
+    const syncState = {
+      lastProgress: null as SyncProgress | null,
+      error: false,
+    };
+
+    track("commons_sync_started", {
+      source_provider: source.provider,
+      trigger: "manual",
+    });
+
     try {
       const connector = await getConnectorForSource(db, source);
-      const embedConfig = buildEmbedConfig(db);
       const sender: WebContents = event.sender;
 
       await syncSource(
@@ -87,6 +100,7 @@ export function registerSyncHandlers(): void {
         connector,
         embedConfig,
         (progress) => {
+          syncState.lastProgress = progress;
           try {
             sender.send("sync:progress", progress);
           } catch {
@@ -95,8 +109,21 @@ export function registerSyncHandlers(): void {
         },
         controller.signal,
       );
+    } catch (err) {
+      syncState.error = true;
+      throw err;
     } finally {
       activeSyncs.delete(sourceId);
+      track("commons_sync_completed", {
+        source_provider: source.provider,
+        trigger: "manual",
+        duration_ms: Date.now() - startMs,
+        doc_count: syncState.lastProgress?.current ?? 0,
+        skipped_count: syncState.lastProgress?.skipped ?? 0,
+        error_count: syncState.lastProgress?.errors.length ?? 0,
+        phase: syncState.error ? "error" : "done",
+        embedding_provider: embedConfig.provider,
+      });
     }
   });
 

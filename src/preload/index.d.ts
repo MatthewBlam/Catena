@@ -37,9 +37,16 @@ interface CommonsAPI {
   checkEmbeddingHealth(): Promise<import("../shared/types").EmbeddingHealth>;
   deleteSecret(key: string): Promise<void>;
   hasSecret(key: string): Promise<boolean>;
-  getAutoSync(): Promise<{ enabled: boolean; intervalMs: number; lastSyncedAt: string | null; syncing: boolean }>;
+  getAutoSync(): Promise<{
+    enabled: boolean;
+    intervalMs: number;
+    lastSyncedAt: string | null;
+    syncing: boolean;
+  }>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   setAutoSyncInterval(ms: number): Promise<void>;
+  getTelemetryEnabled(): Promise<boolean>;
+  setTelemetryEnabled(enabled: boolean): Promise<void>;
 }
 
 interface ElectronDrag {

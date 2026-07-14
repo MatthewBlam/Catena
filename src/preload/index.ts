@@ -72,12 +72,20 @@ const api = {
     ipcRenderer.invoke("secrets:delete", key),
   hasSecret: (key: string): Promise<boolean> =>
     ipcRenderer.invoke("secrets:has", key),
-  getAutoSync: (): Promise<{ enabled: boolean; intervalMs: number; lastSyncedAt: string | null; syncing: boolean }> =>
-    ipcRenderer.invoke("settings:get-auto-sync"),
+  getAutoSync: (): Promise<{
+    enabled: boolean;
+    intervalMs: number;
+    lastSyncedAt: string | null;
+    syncing: boolean;
+  }> => ipcRenderer.invoke("settings:get-auto-sync"),
   setAutoSyncEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke("settings:set-auto-sync-enabled", enabled),
   setAutoSyncInterval: (ms: number): Promise<void> =>
     ipcRenderer.invoke("settings:set-auto-sync-interval", ms),
+  getTelemetryEnabled: (): Promise<boolean> =>
+    ipcRenderer.invoke("settings:get-telemetry-enabled"),
+  setTelemetryEnabled: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke("settings:set-telemetry-enabled", enabled),
 };
 
 contextBridge.exposeInMainWorld("api", api);

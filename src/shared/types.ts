@@ -45,6 +45,7 @@ export interface SearchResult {
 export interface SearchResponse {
   results: SearchResult[];
   rerankFailed: boolean;
+  rewrittenQuery?: string;
 }
 
 export interface SyncProgress {

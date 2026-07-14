@@ -19,6 +19,7 @@ export default defineConfig({
       "process.env.GOOGLE_CLIENT_SECRET": JSON.stringify(process.env.GOOGLE_CLIENT_SECRET ?? ""),
       "process.env.NOTION_CLIENT_ID": JSON.stringify(process.env.NOTION_CLIENT_ID ?? ""),
       "process.env.NOTION_CLIENT_SECRET": JSON.stringify(process.env.NOTION_CLIENT_SECRET ?? ""),
+      "process.env.POSTHOG_API_KEY": JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
     },
   },
   preload: {
