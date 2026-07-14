@@ -27,6 +27,21 @@ interface OllamaEmbedResponse {
   embeddings: number[][];
 }
 
+/**
+ * Aborting has to be an exception, never an early return.
+ *
+ * Each batch writes into a pre-sized `results` array. A batch that bails out
+ * quietly leaves `undefined` holes behind, and the caller — which has no way to
+ * tell a hole from a real embedding — happily hands them to `embeddingToBuffer`.
+ * The resulting TypeError is caught by the sync manager and recorded as a
+ * *document* error, which is how cancelling a sync used to poison documents.
+ */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  }
+}
+
 async function runConcurrent<T>(
   items: T[],
   fn: (item: T) => Promise<void>,
@@ -103,7 +118,7 @@ async function embedWithCohere(
   await runConcurrent(
     batches,
     async (batch) => {
-      if (signal?.aborted) return;
+      throwIfAborted(signal);
       const res = await fetchWithRetry(
         "https://api.cohere.com/v2/embed",
         {
@@ -160,7 +175,7 @@ async function embedWithOllama(
   await runConcurrent(
     batches,
     async (batch) => {
-      if (signal?.aborted) return;
+      throwIfAborted(signal);
       const res = await fetchWithRetry(
         "http://localhost:11434/api/embed",
         {

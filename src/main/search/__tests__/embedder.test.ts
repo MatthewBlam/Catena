@@ -322,3 +322,69 @@ describe("embedQuery", () => {
     expect(result.length).toBe(768);
   });
 });
+
+describe("abort handling", () => {
+  const cohereConfig: EmbedConfig = { provider: "cohere", apiKey: "test-key" };
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * 384 texts is 4 Cohere batches at a concurrency of 3, so the fourth batch
+   * starts only after one of the first three has already resolved. Aborting once
+   * the third request is in flight is therefore the exact race that used to
+   * matter: nothing rejects — the in-flight batches all succeed — and batch four
+   * simply declines to run, leaving its 96 slots `undefined`.
+   */
+  function abortOnThirdRequest(controller: AbortController): void {
+    let calls = 0;
+    vi.mocked(fetch).mockImplementation(async () => {
+      calls++;
+      if (calls === 3) controller.abort();
+      return {
+        ok: true,
+        json: async () => ({
+          embeddings: { float: Array(96).fill(Array(4).fill(0.1)) },
+        }),
+      } as Response;
+    });
+  }
+
+  it("rejects instead of resolving with holes when aborted mid-batch", async () => {
+    const controller = new AbortController();
+    abortOnThirdRequest(controller);
+
+    await expect(
+      embedDocuments(Array(384).fill("text"), cohereConfig, controller.signal),
+    ).rejects.toThrow();
+  });
+
+  it("never resolves an array containing a hole", async () => {
+    const controller = new AbortController();
+    abortOnThirdRequest(controller);
+
+    const embeddings = await embedDocuments(
+      Array(384).fill("text"),
+      cohereConfig,
+      controller.signal,
+    ).catch(() => null);
+
+    // Rejecting is the correct outcome. What must never happen is resolving with
+    // gaps — `embeddingToBuffer(undefined)` is a TypeError the sync manager would
+    // misattribute to the document.
+    if (embeddings !== null) {
+      // `Array.from` is load-bearing: the results array is built with
+      // `new Array(n)`, so an unwritten slot is a *hole*, not an `undefined`
+      // value — and `every`/`some`/`forEach` skip holes entirely. Asserting on
+      // the sparse array directly would pass even when every slot is missing.
+      const dense = Array.from(embeddings);
+      expect(dense).toHaveLength(384);
+      expect(dense.every((e) => e instanceof Float32Array)).toBe(true);
+    }
+  });
+});
