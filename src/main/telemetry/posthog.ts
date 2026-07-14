@@ -10,6 +10,13 @@ let distinctId: string | null = null;
 let enabled = true;
 
 export function initTelemetry(db: Database.Database): void {
+  // Read the user's choice *before* the API-key guard. `enabled` is what the
+  // Settings toggle renders, so leaving it at its `true` default whenever
+  // POSTHOG_API_KEY is unset would show "on" to someone who turned it off, and
+  // keep showing it across every restart. A toggle that misreports its own state
+  // is worse than no toggle — and an accurate opt-out is the whole of C3.
+  enabled = getSetting(db, "telemetry_enabled") !== "false";
+
   if (!API_KEY) return;
 
   let deviceId = getSetting(db, "device_id");
@@ -18,8 +25,6 @@ export function initTelemetry(db: Database.Database): void {
     upsertSetting(db, "device_id", deviceId);
   }
   distinctId = deviceId;
-
-  enabled = getSetting(db, "telemetry_enabled") !== "false";
 
   if (!client) {
     client = new PostHog(API_KEY, {

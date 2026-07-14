@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { SunIcon, MoonIcon } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
+import { Switch } from "@renderer/components/ui/switch";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import type { StorageStats } from "../../../shared/types";
 
@@ -51,6 +52,7 @@ export function SettingsPage({
   const [autoSyncInterval, setAutoSyncInterval] = useState(30 * 60 * 1000);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
+  const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevVisibleRef = useRef(false);
 
@@ -58,15 +60,16 @@ export function SettingsPage({
     if (visible && !prevVisibleRef.current) {
       Promise.all([
         window.api.getEmbeddingProvider(),
-        window.api.loadSecret("cohere_api_key"),
+        window.api.hasSecret("cohere_api_key"),
         window.api.getStorageStats(),
         window.api.getAutoSync(),
         window.api.hasSecret("notion_token"),
         window.api.hasSecret("google_tokens"),
+        window.api.getTelemetryEnabled(),
       ])
-        .then(([p, key, s, sync, notion, drive]) => {
+        .then(([p, keyPresent, s, sync, notion, drive, telemetry]) => {
           setProvider(p);
-          setHasKey(key !== null);
+          setHasKey(keyPresent);
           setStats(s);
           setAutoSyncEnabled(sync.enabled);
           setAutoSyncInterval(sync.intervalMs);
@@ -74,6 +77,7 @@ export function SettingsPage({
           setAutoSyncing(sync.syncing);
           setHasNotion(notion);
           setHasDrive(drive);
+          setTelemetryEnabled(telemetry);
           setLoadError(null);
         })
         .catch(() => {
@@ -165,6 +169,19 @@ export function SettingsPage({
       setAutoSyncInterval(ms);
     } catch {
       setLoadError("Failed to update sync interval.");
+    }
+  }
+
+  async function handleToggleTelemetry(next: boolean): Promise<void> {
+    // Optimistic, then reconciled: a switch that does not move under the cursor
+    // feels broken. If the write fails we put it back rather than leave the UI
+    // claiming a setting that was never saved.
+    setTelemetryEnabled(next);
+    try {
+      await window.api.setTelemetryEnabled(next);
+    } catch {
+      setTelemetryEnabled(!next);
+      setLoadError("Failed to update analytics setting.");
     }
   }
 
@@ -421,6 +438,87 @@ export function SettingsPage({
               ))}
             </div>
           )}
+        </section>
+
+        <div className="border-t border-border" />
+
+        <section className="space-y-3">
+          <h2 className="text-sm font-medium text-muted-foreground">Privacy</h2>
+
+          <div className="flex items-start justify-between gap-6 rounded-lg border border-border bg-card p-3">
+            <div className="space-y-0.5">
+              <label
+                htmlFor="telemetry-toggle"
+                className="text-sm font-medium text-foreground"
+              >
+                Anonymous usage analytics
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Counts of things like searches run and sources added, tied to a
+                random device ID. Never your queries, your documents, or their
+                titles.
+              </p>
+            </div>
+            <Switch
+              id="telemetry-toggle"
+              checked={telemetryEnabled}
+              onCheckedChange={handleToggleTelemetry}
+              className="mt-0.5"
+            />
+          </div>
+
+          {/*
+            Commons is local-first, not local-only, and the difference is not
+            self-evident from the marketing. Someone deciding whether to point
+            this at their club's documents deserves to read the actual answer on
+            the settings page, not infer it.
+          */}
+          <div className="rounded-lg border border-border bg-card p-3 space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              What leaves your device
+            </p>
+            {provider === "cohere" ? (
+              <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
+                <li>
+                  <span className="text-foreground">Your document text</span> is
+                  sent to Cohere to be embedded — every chunk of every document
+                  you sync, once per sync.
+                </li>
+                <li>
+                  <span className="text-foreground">Your search queries</span>{" "}
+                  are sent to Cohere to be rewritten, and the top matching
+                  chunks are sent back for reranking.
+                </li>
+                <li>
+                  Your documents and embeddings are stored only on this device.
+                  Cohere does not keep them.
+                </li>
+              </ul>
+            ) : (
+              <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
+                <li>
+                  <span className="text-foreground">Nothing.</span> Ollama runs
+                  on this machine, so your documents and queries never leave it.
+                </li>
+                <li>
+                  Syncing still fetches your documents from Notion or Google
+                  Drive, which is how they get here in the first place.
+                </li>
+              </ul>
+            )}
+            <Button
+              variant="link"
+              size="xs"
+              className="px-0"
+              onClick={() => {
+                void window.api.openExternal(
+                  "https://github.com/MatthewBlam/commons-app/blob/main/PRIVACY.md",
+                );
+              }}
+            >
+              Read the full privacy policy
+            </Button>
+          </div>
         </section>
 
         <div className="border-t border-border" />
