@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { drive_v3 } from "@googleapis/drive";
 import { DriveConnector, extractFolderIdFromUrl } from "../drive";
+import type { GoogleOAuth2Client } from "../../auth/google-oauth";
 import type { RawDocument } from "../../sync/sync-manager";
+
+/** DriveConnector only forwards this to `new drive_v3.Drive({ auth })`, which is mocked below. */
+const fakeAuth = {} as unknown as GoogleOAuth2Client;
 
 const mockFilesList = vi.fn();
 const mockFilesGet = vi.fn();
@@ -33,7 +38,9 @@ vi.mock("mammoth", () => ({
   extractRawText: vi.fn(),
 }));
 
-function makeDriveFile(overrides: Record<string, unknown> = {}) {
+function makeDriveFile(
+  overrides: Record<string, unknown> = {},
+): drive_v3.Schema$File {
   return {
     id: "file-1",
     name: "Test Doc",
@@ -47,19 +54,33 @@ function makeDriveFile(overrides: Record<string, unknown> = {}) {
 
 describe("extractFolderIdFromUrl", () => {
   it("extracts folder ID from standard URL", () => {
-    expect(extractFolderIdFromUrl("https://drive.google.com/drive/folders/1abc2def3ghi")).toBe("1abc2def3ghi");
+    expect(
+      extractFolderIdFromUrl(
+        "https://drive.google.com/drive/folders/1abc2def3ghi",
+      ),
+    ).toBe("1abc2def3ghi");
   });
 
   it("extracts folder ID from URL with user path", () => {
-    expect(extractFolderIdFromUrl("https://drive.google.com/drive/u/0/folders/1abc2def3ghi")).toBe("1abc2def3ghi");
+    expect(
+      extractFolderIdFromUrl(
+        "https://drive.google.com/drive/u/0/folders/1abc2def3ghi",
+      ),
+    ).toBe("1abc2def3ghi");
   });
 
   it("handles folder ID with hyphens and underscores", () => {
-    expect(extractFolderIdFromUrl("https://drive.google.com/drive/folders/1a-b_c2d-ef")).toBe("1a-b_c2d-ef");
+    expect(
+      extractFolderIdFromUrl(
+        "https://drive.google.com/drive/folders/1a-b_c2d-ef",
+      ),
+    ).toBe("1a-b_c2d-ef");
   });
 
   it("returns null for non-folder URLs", () => {
-    expect(extractFolderIdFromUrl("https://drive.google.com/file/d/file-id")).toBeNull();
+    expect(
+      extractFolderIdFromUrl("https://drive.google.com/file/d/file-id"),
+    ).toBeNull();
   });
 
   it("returns null for invalid URLs", () => {
@@ -83,7 +104,7 @@ describe("DriveConnector", () => {
       data: "Hello from Google Docs",
     });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -119,7 +140,7 @@ describe("DriveConnector", () => {
 
     mockFilesExport.mockResolvedValue({ data: "Nested content" });
 
-    const connector = new DriveConnector({} as any, "root-folder");
+    const connector = new DriveConnector(fakeAuth, "root-folder");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -145,9 +166,11 @@ describe("DriveConnector", () => {
         },
       });
 
-    mockFilesExport.mockResolvedValueOnce({ data: "Content 1" }).mockResolvedValueOnce({ data: "Content 2" });
+    mockFilesExport
+      .mockResolvedValueOnce({ data: "Content 1" })
+      .mockResolvedValueOnce({ data: "Content 2" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -173,7 +196,7 @@ describe("DriveConnector", () => {
     });
     mockFilesExport.mockResolvedValue({ data: "Name,Amount\nAlice,100" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -181,7 +204,9 @@ describe("DriveConnector", () => {
 
     expect(docs).toHaveLength(1);
     expect(docs[0].content).toBe("Name,Amount\nAlice,100");
-    expect(mockFilesExport).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "text/csv" }));
+    expect(mockFilesExport).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: "text/csv" }),
+    );
   });
 
   it("exports Google Slides as plain text", async () => {
@@ -199,7 +224,7 @@ describe("DriveConnector", () => {
     });
     mockFilesExport.mockResolvedValue({ data: "Slide 1 content" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -224,7 +249,7 @@ describe("DriveConnector", () => {
     });
     mockFilesGet.mockResolvedValue({ data: "Plain text notes" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -249,7 +274,7 @@ describe("DriveConnector", () => {
     });
     mockFilesGet.mockResolvedValue({ data: "# Hello\nWorld" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -274,7 +299,7 @@ describe("DriveConnector", () => {
       },
     });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -297,7 +322,7 @@ describe("DriveConnector", () => {
       },
     });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -315,7 +340,7 @@ describe("DriveConnector", () => {
     });
     mockFilesExport.mockResolvedValue({ data: "" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -342,7 +367,7 @@ describe("DriveConnector", () => {
     mockFilesGet.mockResolvedValue({ data: pdfBuffer });
     mockGetText.mockResolvedValue({ text: "Extracted PDF text" });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -370,7 +395,7 @@ describe("DriveConnector", () => {
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -378,7 +403,9 @@ describe("DriveConnector", () => {
 
     expect(docs).toHaveLength(1);
     expect(docs[0].title).toBe("Good Doc");
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Corrupt Doc"));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Corrupt Doc"),
+    );
     warnSpy.mockRestore();
   });
 
@@ -400,7 +427,7 @@ describe("DriveConnector", () => {
       });
     });
 
-    const connector = new DriveConnector({} as any, "root-folder");
+    const connector = new DriveConnector(fakeAuth, "root-folder");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -437,7 +464,7 @@ describe("DriveConnector", () => {
         },
       });
 
-    const connector = new DriveConnector({} as any, "root-folder");
+    const connector = new DriveConnector(fakeAuth, "root-folder");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);
@@ -455,7 +482,8 @@ describe("DriveConnector", () => {
         files: [
           makeDriveFile({
             id: "docx-1",
-            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            mimeType:
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             name: "report.docx",
           }),
         ],
@@ -471,7 +499,7 @@ describe("DriveConnector", () => {
       messages: [],
     });
 
-    const connector = new DriveConnector({} as any, "folder-1");
+    const connector = new DriveConnector(fakeAuth, "folder-1");
     const docs: RawDocument[] = [];
     for await (const doc of connector.fetchDocuments()) {
       docs.push(doc);

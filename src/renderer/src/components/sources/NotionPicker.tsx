@@ -8,11 +8,16 @@ import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import type { NotionItemSummary } from "../../../../shared/types";
 
 interface NotionPickerProps {
-  onAdd: (selections: Array<{ id: string; name: string }>) => Promise<{ added: number; failed: number }>;
+  onAdd: (
+    selections: Array<{ id: string; name: string }>,
+  ) => Promise<{ added: number; failed: number }>;
   onClose: () => void;
 }
 
-export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.Element {
+export function NotionPicker({
+  onAdd,
+  onClose,
+}: NotionPickerProps): React.JSX.Element {
   const [items, setItems] = useState<NotionItemSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,8 +37,13 @@ export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.E
       })
       .catch((err: unknown) => {
         if (!cancelRef.current) {
-          const msg = err instanceof Error ? err.message : "Failed to load Notion pages";
-          setError(msg.includes("401") || msg.toLowerCase().includes("unauthorized") ? "Session expired — please reconnect in Settings." : msg);
+          const msg =
+            err instanceof Error ? err.message : "Failed to load Notion pages";
+          setError(
+            msg.includes("401") || msg.toLowerCase().includes("unauthorized")
+              ? "Session expired — please reconnect in Settings."
+              : msg,
+          );
         }
       })
       .finally(() => {
@@ -48,8 +58,13 @@ export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.E
     };
   }, []);
 
-  const filtered = searchQuery ? items.filter((i) => i.title.toLowerCase().includes(searchQuery.toLowerCase())) : items;
-  const allFilteredSelected = filtered.length > 0 && filtered.every((i) => selected.has(i.id));
+  const filtered = searchQuery
+    ? items.filter((i) =>
+        i.title.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : items;
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((i) => selected.has(i.id));
 
   function toggleSelectAll(): void {
     setSelected((prev) => {
@@ -95,7 +110,11 @@ export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.E
           <Button variant="ghost" size="sm" onClick={onClose}>
             Close
           </Button>
-          <Button variant="outline" size="sm" onClick={() => fetchItems.current()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchItems.current()}
+          >
             Retry
           </Button>
         </div>
@@ -109,17 +128,33 @@ export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.E
 
       <div className="relative">
         <SearchIcon className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-        <Input type="search" size="sm" placeholder="Filter..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-5.5" nativeInput />
+        <Input
+          type="search"
+          size="sm"
+          placeholder="Filter..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-5.5"
+          nativeInput
+        />
       </div>
 
       <div className="space-y-1.5">
         {!loading && filtered.length > 0 && (
           <div className="flex items-center">
-            <button type="button" onClick={toggleSelectAll} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
               {allFilteredSelected ? "Deselect all" : "Select all"}
             </button>
             {selected.size > 0 && !allFilteredSelected && (
-              <button type="button" onClick={() => setSelected(new Map())} className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors">
+              <button
+                type="button"
+                onClick={() => setSelected(new Map())}
+                className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
                 Clear selection
               </button>
             )}
@@ -132,13 +167,16 @@ export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.E
               <Spinner className="size-5 text-muted-foreground" />
             </div>
           ) : filtered.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">{searchQuery ? "No results found" : "No pages found"}</p>
+            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+              {searchQuery ? "No results found" : "No pages found"}
+            </p>
           ) : (
             filtered.map((item) => (
               <div
                 key={item.id}
                 onClick={() => toggleSelect(item)}
-                className="flex items-center gap-2.5 border-b border-input px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer last:border-b-0">
+                className="flex items-center gap-2.5 border-b border-input px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer last:border-b-0"
+              >
                 <Checkbox checked={selected.has(item.id)} />
                 {item.icon ? (
                   <span className="text-base shrink-0">{item.icon}</span>
@@ -158,8 +196,16 @@ export function NotionPicker({ onAdd, onClose }: NotionPickerProps): React.JSX.E
         <Button variant="ghost" size="sm" onClick={onClose}>
           Close
         </Button>
-        <Button size="sm" onClick={handleAdd} disabled={selected.size === 0 || adding}>
-          {adding ? "Adding…" : selected.size === 0 ? "Add sources" : `Add ${selected.size} source${selected.size !== 1 ? "s" : ""}`}
+        <Button
+          size="sm"
+          onClick={handleAdd}
+          disabled={selected.size === 0 || adding}
+        >
+          {adding
+            ? "Adding…"
+            : selected.size === 0
+              ? "Add sources"
+              : `Add ${selected.size} source${selected.size !== 1 ? "s" : ""}`}
         </Button>
       </div>
     </div>

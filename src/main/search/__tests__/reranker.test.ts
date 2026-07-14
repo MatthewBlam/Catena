@@ -99,7 +99,9 @@ describe("rerank", () => {
 
     await expect(
       rerank("query", [{ id: "a", text: "doc" }], "key"),
-    ).rejects.toThrow("Cohere rerank returned invalid response: missing results array");
+    ).rejects.toThrow(
+      "Cohere rerank returned invalid response: missing results array",
+    );
   });
 
   it("throws when results is not an array", async () => {
@@ -110,7 +112,9 @@ describe("rerank", () => {
 
     await expect(
       rerank("query", [{ id: "a", text: "doc" }], "key"),
-    ).rejects.toThrow("Cohere rerank returned invalid response: missing results array");
+    ).rejects.toThrow(
+      "Cohere rerank returned invalid response: missing results array",
+    );
   });
 
   it("filters out results with out-of-bounds index", async () => {

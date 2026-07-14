@@ -9,10 +9,21 @@ interface SearchInputProps {
   loading: boolean;
 }
 
-export function SearchInput({ value, onChange, onSubmit, loading }: SearchInputProps): React.JSX.Element {
+export function SearchInput({
+  value,
+  onChange,
+  onSubmit,
+  loading,
+}: SearchInputProps): React.JSX.Element {
   return (
     <div className="relative">
-      <div className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-muted-foreground">{loading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}</div>
+      <div className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-muted-foreground">
+        {loading ? (
+          <Spinner className="size-4" />
+        ) : (
+          <SearchIcon className="size-4" />
+        )}
+      </div>
       <Input
         type="search"
         placeholder="Ask a question..."

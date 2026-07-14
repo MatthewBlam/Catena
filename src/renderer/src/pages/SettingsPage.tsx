@@ -28,7 +28,12 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: SettingsPageProps): React.JSX.Element {
+export function SettingsPage({
+  visible,
+  dark,
+  onToggleTheme,
+  onProviderReset,
+}: SettingsPageProps): React.JSX.Element {
   const [provider, setProvider] = useState<string>("cohere");
   const [hasKey, setHasKey] = useState(false);
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -111,7 +116,8 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
   }
 
   async function handleRemoveKey(): Promise<void> {
-    if (!confirm("Remove your Cohere API key? Search will stop working.")) return;
+    if (!confirm("Remove your Cohere API key? Search will stop working."))
+      return;
     try {
       await window.api.deleteSecret("cohere_api_key");
       setHasKey(false);
@@ -121,9 +127,18 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
     }
   }
 
-  async function handleSwitchProvider(newProvider: "cohere" | "ollama"): Promise<void> {
+  async function handleSwitchProvider(
+    newProvider: "cohere" | "ollama",
+  ): Promise<void> {
     if (newProvider === provider) return;
-    if (stats && stats.chunkCount > 0 && !confirm("Switching providers requires re-embedding all documents. Continue?")) return;
+    if (
+      stats &&
+      stats.chunkCount > 0 &&
+      !confirm(
+        "Switching providers requires re-embedding all documents. Continue?",
+      )
+    )
+      return;
     try {
       await window.api.setEmbeddingProvider(newProvider);
       setProvider(newProvider);
@@ -154,7 +169,12 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
   }
 
   async function handleDisconnectNotion(): Promise<void> {
-    if (!confirm("Disconnect Notion? You will need to re-authenticate to sync Notion sources.")) return;
+    if (
+      !confirm(
+        "Disconnect Notion? You will need to re-authenticate to sync Notion sources.",
+      )
+    )
+      return;
     setDisconnectingNotion(true);
     try {
       await window.api.deleteSecret("notion_token");
@@ -167,7 +187,12 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
   }
 
   async function handleDisconnectDrive(): Promise<void> {
-    if (!confirm("Disconnect Google Drive? You will need to re-authenticate to sync Drive sources.")) return;
+    if (
+      !confirm(
+        "Disconnect Google Drive? You will need to re-authenticate to sync Drive sources.",
+      )
+    )
+      return;
     setDisconnectingDrive(true);
     try {
       await window.api.deleteSecret("google_tokens");
@@ -180,7 +205,12 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
   }
 
   async function handleClearAllData(): Promise<void> {
-    if (!confirm("Delete all sources, documents, and settings? This cannot be undone.")) return;
+    if (
+      !confirm(
+        "Delete all sources, documents, and settings? This cannot be undone.",
+      )
+    )
+      return;
     setClearing(true);
     try {
       await window.api.clearAllData();
@@ -197,7 +227,9 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
   return (
     <div className="max-w-3xl mx-auto px-10 pt-3 pb-8">
       <h1 className="text-2xl font-semibold mb-1">Settings</h1>
-      <p className="text-muted-foreground text-sm mb-6">Manage your embedding provider and app data</p>
+      <p className="text-muted-foreground text-sm mb-6">
+        Manage your embedding provider and app data
+      </p>
 
       {loadError && (
         <ErrorBanner variant="error" className="mb-6">
@@ -208,24 +240,44 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
       <div className="space-y-8">
         <div className="grid grid-cols-2 gap-4">
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Embedding Provider</h2>
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Embedding Provider
+            </h2>
             <div className="flex gap-2">
-              <Button variant={provider === "cohere" ? "default" : "outline"} size="sm" onClick={() => handleSwitchProvider("cohere")}>
+              <Button
+                variant={provider === "cohere" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleSwitchProvider("cohere")}
+              >
                 Cohere API
               </Button>
-              <Button variant={provider === "ollama" ? "default" : "outline"} size="sm" onClick={() => handleSwitchProvider("ollama")}>
+              <Button
+                variant={provider === "ollama" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleSwitchProvider("ollama")}
+              >
                 Ollama (Local)
               </Button>
             </div>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Background Sync</h2>
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Background Sync
+            </h2>
             <div className="flex gap-2">
-              <Button variant={autoSyncEnabled ? "default" : "outline"} size="sm" onClick={() => handleToggleAutoSync(true)}>
+              <Button
+                variant={autoSyncEnabled ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleToggleAutoSync(true)}
+              >
                 Enabled
               </Button>
-              <Button variant={!autoSyncEnabled ? "default" : "outline"} size="sm" onClick={() => handleToggleAutoSync(false)}>
+              <Button
+                variant={!autoSyncEnabled ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleToggleAutoSync(false)}
+              >
                 Disabled
               </Button>
             </div>
@@ -237,24 +289,49 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
                   { label: "1 hr", ms: 60 * 60 * 1000 },
                   { label: "2 hr", ms: 2 * 60 * 60 * 1000 },
                 ].map((opt) => (
-                  <Button key={opt.ms} variant={autoSyncInterval === opt.ms ? "default" : "outline"} size="sm" onClick={() => handleSetSyncInterval(opt.ms)}>
+                  <Button
+                    key={opt.ms}
+                    variant={
+                      autoSyncInterval === opt.ms ? "default" : "outline"
+                    }
+                    size="sm"
+                    onClick={() => handleSetSyncInterval(opt.ms)}
+                  >
                     {opt.label}
                   </Button>
                 ))}
               </div>
             )}
-            {autoSyncEnabled && <p className="text-xs text-muted-foreground">{autoSyncing ? "Syncing now…" : lastSyncedAt ? `Last synced ${formatRelativeTime(lastSyncedAt)}` : "No sync yet"}</p>}
+            {autoSyncEnabled && (
+              <p className="text-xs text-muted-foreground">
+                {autoSyncing
+                  ? "Syncing now…"
+                  : lastSyncedAt
+                    ? `Last synced ${formatRelativeTime(lastSyncedAt)}`
+                    : "No sync yet"}
+              </p>
+            )}
           </section>
         </div>
 
         <section className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground">Appearance</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Appearance
+          </h2>
           <div className="flex gap-2">
-            <Button variant={!dark ? "default" : "outline"} size="sm" onClick={() => dark && onToggleTheme()}>
+            <Button
+              variant={!dark ? "default" : "outline"}
+              size="sm"
+              onClick={() => dark && onToggleTheme()}
+            >
               <SunIcon className="size-4 mr-1.5" />
               Light
             </Button>
-            <Button variant={dark ? "default" : "outline"} size="sm" onClick={() => !dark && onToggleTheme()}>
+            <Button
+              variant={dark ? "default" : "outline"}
+              size="sm"
+              onClick={() => !dark && onToggleTheme()}
+            >
               <MoonIcon className="size-4 mr-1.5" />
               Dark
             </Button>
@@ -263,7 +340,9 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
 
         {provider === "cohere" && (
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">Cohere API Key</h2>
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Cohere API Key
+            </h2>
             {hasKey ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-foreground">Key configured</span>
@@ -273,16 +352,34 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
                 </Button>
               </div>
             ) : (
-              <ErrorBanner variant="warning">No API key configured. Search will not work.</ErrorBanner>
+              <ErrorBanner variant="warning">
+                No API key configured. Search will not work.
+              </ErrorBanner>
             )}
             <div className="flex gap-2">
-              <Input type="password" placeholder="Paste new Cohere API key" value={newKey} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKey(e.target.value)} />
-              <Button size="sm" onClick={handleUpdateKey} loading={validating} disabled={!newKey.trim()}>
+              <Input
+                type="password"
+                placeholder="Paste new Cohere API key"
+                value={newKey}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setNewKey(e.target.value)
+                }
+              />
+              <Button
+                size="sm"
+                onClick={handleUpdateKey}
+                loading={validating}
+                disabled={!newKey.trim()}
+              >
                 {hasKey ? "Update" : "Save"}
               </Button>
             </div>
             {keyError && <ErrorBanner variant="error">{keyError}</ErrorBanner>}
-            {keySuccess && <p className="text-sm text-success-foreground">API key updated successfully.</p>}
+            {keySuccess && (
+              <p className="text-sm text-success-foreground">
+                API key updated successfully.
+              </p>
+            )}
           </section>
         )}
 
@@ -305,14 +402,19 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
                 <p className="text-xs text-muted-foreground">Chunks</p>
               </div>
               <div className="rounded-lg border border-border bg-card p-3">
-                <p className="text-2xl font-semibold">{formatBytes(stats.dbSizeBytes)}</p>
+                <p className="text-2xl font-semibold">
+                  {formatBytes(stats.dbSizeBytes)}
+                </p>
                 <p className="text-xs text-muted-foreground">Database size</p>
               </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
               {Array.from({ length: 4 }, (_, i) => (
-                <div key={i} className="rounded-lg border border-border bg-card p-3 space-y-1">
+                <div
+                  key={i}
+                  className="rounded-lg border border-border bg-card p-3 space-y-1"
+                >
                   <div className="h-7 w-12 rounded bg-muted animate-pulse" />
                   <div className="h-3 w-16 rounded bg-muted animate-pulse" />
                 </div>
@@ -324,15 +426,34 @@ export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: 
         <div className="border-t border-border" />
 
         <section className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground">Danger Zone</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Danger Zone
+          </h2>
           <div className="flex gap-2">
-            <Button variant="destructive-outline" size="sm" onClick={handleClearAllData} loading={clearing}>
+            <Button
+              variant="destructive-outline"
+              size="sm"
+              onClick={handleClearAllData}
+              loading={clearing}
+            >
               Clear all data
             </Button>
-            <Button variant="destructive-outline" size="sm" onClick={handleDisconnectNotion} loading={disconnectingNotion} disabled={!hasNotion}>
+            <Button
+              variant="destructive-outline"
+              size="sm"
+              onClick={handleDisconnectNotion}
+              loading={disconnectingNotion}
+              disabled={!hasNotion}
+            >
               Disconnect Notion
             </Button>
-            <Button variant="destructive-outline" size="sm" onClick={handleDisconnectDrive} loading={disconnectingDrive} disabled={!hasDrive}>
+            <Button
+              variant="destructive-outline"
+              size="sm"
+              onClick={handleDisconnectDrive}
+              loading={disconnectingDrive}
+              disabled={!hasDrive}
+            >
               Disconnect Google Drive
             </Button>
           </div>

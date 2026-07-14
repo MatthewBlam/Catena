@@ -12,7 +12,10 @@ function extractFolderIdFromUrl(url: string): string | null {
   return match?.[1] ?? null;
 }
 
-export function DriveFolderInput({ onSubmit, onCancel }: DriveFolderInputProps): React.JSX.Element {
+export function DriveFolderInput({
+  onSubmit,
+  onCancel,
+}: DriveFolderInputProps): React.JSX.Element {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +23,9 @@ export function DriveFolderInput({ onSubmit, onCancel }: DriveFolderInputProps):
   function handleSubmit(): void {
     const folderId = extractFolderIdFromUrl(url.trim());
     if (!folderId) {
-      setError("Could not extract a folder ID. Paste a Google Drive folder URL.");
+      setError(
+        "Could not extract a folder ID. Paste a Google Drive folder URL.",
+      );
       return;
     }
     const folderName = name.trim() || "Drive folder";
@@ -30,13 +35,24 @@ export function DriveFolderInput({ onSubmit, onCancel }: DriveFolderInputProps):
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <label htmlFor="drive-source-name" className="text-sm font-medium text-foreground">
+        <label
+          htmlFor="drive-source-name"
+          className="text-sm font-medium text-foreground"
+        >
           Source name
         </label>
-        <Input id="drive-source-name" placeholder="e.g. Club Drive" value={name} onChange={(e) => setName((e.target as HTMLInputElement).value)} />
+        <Input
+          id="drive-source-name"
+          placeholder="e.g. Club Drive"
+          value={name}
+          onChange={(e) => setName((e.target as HTMLInputElement).value)}
+        />
       </div>
       <div className="space-y-1.5">
-        <label htmlFor="drive-folder-url" className="text-sm font-medium text-foreground">
+        <label
+          htmlFor="drive-folder-url"
+          className="text-sm font-medium text-foreground"
+        >
           Drive folder URL
         </label>
         <Input
@@ -48,7 +64,10 @@ export function DriveFolderInput({ onSubmit, onCancel }: DriveFolderInputProps):
             setError(null);
           }}
         />
-        <p className="text-xs text-muted-foreground">Paste the URL of the folder you want to sync. All subfolders will be included.</p>
+        <p className="text-xs text-muted-foreground">
+          Paste the URL of the folder you want to sync. All subfolders will be
+          included.
+        </p>
       </div>
       {error && (
         <p role="alert" className="text-sm text-destructive-foreground">

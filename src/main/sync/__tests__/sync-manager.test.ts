@@ -43,11 +43,15 @@ describe("syncSource", () => {
   beforeEach(async () => {
     const embedder = await import("../../search/embedder");
     (embedder.embedDocuments as ReturnType<typeof vi.fn>).mockImplementation(
-      async (texts: string[]) => texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+      async (texts: string[]) =>
+        texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
     );
-    (embedder.getEmbeddingModelName as ReturnType<typeof vi.fn>).mockReturnValue("embed-v4.0");
+    (
+      embedder.getEmbeddingModelName as ReturnType<typeof vi.fn>
+    ).mockReturnValue("embed-v4.0");
     (embedder.embeddingToBuffer as ReturnType<typeof vi.fn>).mockImplementation(
-      (emb: Float32Array) => Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength),
+      (emb: Float32Array) =>
+        Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength),
     );
 
     db = new Database(":memory:");
@@ -335,9 +339,8 @@ describe("syncSource", () => {
 
     await syncSource(db, "src-1", "notion", connector1, testConfig, () => {});
 
-    const { embedDocuments, getEmbeddingModelName } = await import(
-      "../../search/embedder"
-    );
+    const { embedDocuments, getEmbeddingModelName } =
+      await import("../../search/embedder");
     (embedDocuments as ReturnType<typeof vi.fn>).mockClear();
     (getEmbeddingModelName as ReturnType<typeof vi.fn>).mockReturnValue(
       "new-model-v2",
@@ -521,7 +524,11 @@ describe("syncSource", () => {
 
     await syncSource(db, "src-1", "notion", connector, testConfig, () => {});
 
-    const mapWithCurrentModel = getIncrementalSyncMap(db, "src-1", "embed-v4.0");
+    const mapWithCurrentModel = getIncrementalSyncMap(
+      db,
+      "src-1",
+      "embed-v4.0",
+    );
     expect(mapWithCurrentModel.has("doc-ext-1")).toBe(true);
 
     const mapWithNewModel = getIncrementalSyncMap(db, "src-1", "new-model-v2");

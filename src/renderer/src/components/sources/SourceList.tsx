@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Trash2Icon, RefreshCwIcon, ChevronRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
+import {
+  Trash2Icon,
+  RefreshCwIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  SearchIcon,
+} from "lucide-react";
 import { Checkbox } from "@renderer/components/ui/checkbox";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
@@ -15,7 +21,11 @@ interface SourceListProps {
   onRefresh: () => void;
 }
 
-export function SourceList({ sources, label, onRefresh }: SourceListProps): React.JSX.Element {
+export function SourceList({
+  sources,
+  label,
+  onRefresh,
+}: SourceListProps): React.JSX.Element {
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +33,9 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
   const [bulkRemoving, setBulkRemoving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [docsCache, setDocsCache] = useState<Map<string, Document[]>>(new Map());
+  const [docsCache, setDocsCache] = useState<Map<string, Document[]>>(
+    new Map(),
+  );
   const [loadingDocIds, setLoadingDocIds] = useState<Set<string>>(new Set());
   const onRefreshRef = useRef(onRefresh);
 
@@ -50,7 +62,9 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
   }, []);
 
   useEffect(() => {
-    const justFinished = [...prevSyncingRef.current].filter((id) => !syncingIds.has(id));
+    const justFinished = [...prevSyncingRef.current].filter(
+      (id) => !syncingIds.has(id),
+    );
     if (justFinished.length > 0) {
       onRefreshRef.current();
       setDocsCache((prev) => {
@@ -88,7 +102,11 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
   async function handleBulkRemove(): Promise<void> {
     if (selected.size === 0) return;
     const count = selected.size;
-    if (!confirm(`Remove ${count} source${count !== 1 ? "s" : ""}? All synced documents will be deleted.`)) {
+    if (
+      !confirm(
+        `Remove ${count} source${count !== 1 ? "s" : ""}? All synced documents will be deleted.`,
+      )
+    ) {
       return;
     }
     setBulkRemoving(true);
@@ -143,10 +161,18 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
   }
 
   if (sources.length === 0) {
-    return <p className="text-sm text-muted-foreground py-8 text-center">Add a source above to get started</p>;
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        Add a source above to get started
+      </p>
+    );
   }
 
-  const filtered = searchQuery ? sources.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase())) : sources;
+  const filtered = searchQuery
+    ? sources.filter((s) =>
+        s.name.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : sources;
   const selecting = selected.size > 0;
 
   return (
@@ -158,32 +184,52 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
       )}
 
       <div className="flex items-center gap-2">
-        {label && <h2 className="text-sm font-medium text-muted-foreground mr-auto">{selecting ? `${selected.size} selected` : label}</h2>}
+        {label && (
+          <h2 className="text-sm font-medium text-muted-foreground mr-auto">
+            {selecting ? `${selected.size} selected` : label}
+          </h2>
+        )}
         {selecting ? (
           <>
-            <Button variant="ghost" size="xs" onClick={() => setSelected(new Set())}>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setSelected(new Set())}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" size="xs" onClick={handleBulkRemove} loading={bulkRemoving}>
+            <Button
+              variant="destructive"
+              size="xs"
+              onClick={handleBulkRemove}
+              loading={bulkRemoving}
+            >
               Remove {selected.size}
             </Button>
           </>
         ) : (
           <>
-            <Button variant="ghost" size="xs" onClick={() => setSelected(new Set(filtered.map((s) => s.id)))}>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setSelected(new Set(filtered.map((s) => s.id)))}
+            >
               Select all
             </Button>
             <Button
               variant="outline"
               size="xs"
               onClick={async () => {
-                const notSyncing = filtered.filter((s) => !syncingIds.has(s.id)).map((s) => s.id);
+                const notSyncing = filtered
+                  .filter((s) => !syncingIds.has(s.id))
+                  .map((s) => s.id);
                 for (const id of notSyncing) {
                   setSyncingIds((prev) => new Set(prev).add(id));
                   await new Promise((r) => setTimeout(r, 500));
                 }
               }}
-              disabled={filtered.every((s) => syncingIds.has(s.id))}>
+              disabled={filtered.every((s) => syncingIds.has(s.id))}
+            >
               <RefreshCwIcon />
               Sync all
             </Button>
@@ -193,7 +239,15 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
 
       <div className="relative">
         <SearchIcon className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-        <Input type="search" size="sm" placeholder="Filter sources..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-5.5" nativeInput />
+        <Input
+          type="search"
+          size="sm"
+          placeholder="Filter sources..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-5.5"
+          nativeInput
+        />
       </div>
 
       {filtered.map((source) => {
@@ -203,14 +257,29 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
 
         return (
           <div key={source.id}>
-            <div className={`rounded-lg border border-border bg-card p-4 ${hasBottomPanel ? "rounded-b-none border-b-0" : ""}`}>
+            <div
+              className={`rounded-lg border border-border bg-card p-4 ${hasBottomPanel ? "rounded-b-none border-b-0" : ""}`}
+            >
               <div className="flex items-center justify-between gap-3">
-                <button type="button" className="flex items-center cursor-pointer gap-3 min-w-0 text-left rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24" onClick={() => !selecting && toggleExpand(source.id)} disabled={selecting}>
-                  {!selecting && <ChevronRightIcon className={`size-4 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />}
+                <button
+                  type="button"
+                  className="flex items-center cursor-pointer gap-3 min-w-0 text-left rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24"
+                  onClick={() => !selecting && toggleExpand(source.id)}
+                  disabled={selecting}
+                >
+                  {!selecting && (
+                    <ChevronRightIcon
+                      className={`size-4 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                    />
+                  )}
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-medium text-sm truncate">{source.name}</h3>
-                      <span className="shrink-0 rounded-md bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">{providerLabel(source.provider)}</span>
+                      <h3 className="font-medium text-sm truncate">
+                        {source.name}
+                      </h3>
+                      <span className="shrink-0 rounded-md bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
+                        {providerLabel(source.provider)}
+                      </span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {source.documentCount} doc
@@ -219,13 +288,32 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
                   </div>
                 </button>
                 {selecting ? (
-                  <Checkbox checked={selected.has(source.id)} onChange={() => toggleSelect(source.id)} />
+                  <Checkbox
+                    checked={selected.has(source.id)}
+                    onChange={() => toggleSelect(source.id)}
+                  />
                 ) : (
                   <div className="flex gap-1 shrink-0">
-                    <Button variant="ghost" size="icon-xs" onClick={() => setSyncingIds((prev) => new Set(prev).add(source.id))} disabled={isSyncing} title="Sync">
-                      <RefreshCwIcon className={isSyncing ? "animate-spin" : ""} />
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() =>
+                        setSyncingIds((prev) => new Set(prev).add(source.id))
+                      }
+                      disabled={isSyncing}
+                      title="Sync"
+                    >
+                      <RefreshCwIcon
+                        className={isSyncing ? "animate-spin" : ""}
+                      />
                     </Button>
-                    <Button variant="ghost" size="icon-xs" onClick={() => handleRemove(source.id)} loading={removing === source.id} title="Remove">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => handleRemove(source.id)}
+                      loading={removing === source.id}
+                      title="Remove"
+                    >
                       <Trash2Icon />
                     </Button>
                   </div>
@@ -239,15 +327,29 @@ export function SourceList({ sources, label, onRefresh }: SourceListProps): Reac
                     <Spinner className="size-4 text-muted-foreground" />
                   </div>
                 ) : (docsCache.get(source.id) ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-3 text-center">No documents synced</p>
+                  <p className="text-xs text-muted-foreground py-3 text-center">
+                    No documents synced
+                  </p>
                 ) : (
                   <ul className="divide-y divide-border">
                     {(docsCache.get(source.id) ?? []).map((doc) => (
-                      <li key={doc.id} className="flex items-center gap-2 py-2 first:pt-1">
-                        <span className={`size-1.5 shrink-0 rounded-full ${doc.syncStatus === "synced" ? "bg-success" : doc.syncStatus === "pending" ? "bg-warning" : "bg-destructive"}`} />
-                        <span className="text-sm truncate min-w-0 flex-1">{doc.title}</span>
+                      <li
+                        key={doc.id}
+                        className="flex items-center gap-2 py-2 first:pt-1"
+                      >
+                        <span
+                          className={`size-1.5 shrink-0 rounded-full ${doc.syncStatus === "synced" ? "bg-success" : doc.syncStatus === "pending" ? "bg-warning" : "bg-destructive"}`}
+                        />
+                        <span className="text-sm truncate min-w-0 flex-1">
+                          {doc.title}
+                        </span>
                         {doc.url && (
-                          <Button variant="ghost" size="icon-xs" onClick={() => window.api.openExternal(doc.url!)} title="Open source">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => window.api.openExternal(doc.url!)}
+                            title="Open source"
+                          >
                             <ExternalLinkIcon />
                           </Button>
                         )}

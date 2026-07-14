@@ -8,13 +8,27 @@ afterEach(cleanup);
 
 describe("SearchInput", () => {
   it("renders with placeholder", () => {
-    render(<SearchInput value="" onChange={vi.fn()} onSubmit={vi.fn()} loading={false} />);
+    render(
+      <SearchInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        loading={false}
+      />,
+    );
     expect(screen.getByLabelText("Search your documents")).toBeInTheDocument();
   });
 
   it("calls onSubmit on Enter key", () => {
     const onSubmit = vi.fn();
-    render(<SearchInput value="test query" onChange={vi.fn()} onSubmit={onSubmit} loading={false} />);
+    render(
+      <SearchInput
+        value="test query"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        loading={false}
+      />,
+    );
     fireEvent.keyDown(screen.getByLabelText("Search your documents"), {
       key: "Enter",
     });
@@ -23,7 +37,14 @@ describe("SearchInput", () => {
 
   it("does not submit when loading", () => {
     const onSubmit = vi.fn();
-    render(<SearchInput value="test query" onChange={vi.fn()} onSubmit={onSubmit} loading={true} />);
+    render(
+      <SearchInput
+        value="test query"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        loading={true}
+      />,
+    );
     fireEvent.keyDown(screen.getByLabelText("Search your documents"), {
       key: "Enter",
     });

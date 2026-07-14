@@ -37,7 +37,9 @@ export function SourcesPage({ visible }: SourcesPageProps): React.JSX.Element {
 
       <div className="space-y-6">
         <section>
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">Connect a source</h2>
+          <h2 className="text-sm font-medium text-muted-foreground mb-3">
+            Connect a source
+          </h2>
           <div className="space-y-2">
             <ConnectNotionButton onSourceAdded={loadSources} />
             <ConnectDriveButton onSourceAdded={loadSources} />
@@ -55,16 +57,25 @@ export function SourcesPage({ visible }: SourcesPageProps): React.JSX.Element {
 
           {loading ? (
             <div className="space-y-3">
-              <h2 className="text-sm font-medium text-muted-foreground">Connected sources</h2>
+              <h2 className="text-sm font-medium text-muted-foreground">
+                Connected sources
+              </h2>
               {Array.from({ length: 2 }, (_, i) => (
-                <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-2">
+                <div
+                  key={i}
+                  className="rounded-lg border border-border bg-card p-4 space-y-2"
+                >
                   <div className="h-4 w-1/3 rounded bg-muted animate-pulse" />
                   <div className="h-3 w-1/4 rounded bg-muted animate-pulse" />
                 </div>
               ))}
             </div>
           ) : (
-            <SourceList sources={sources} label="Connected sources" onRefresh={loadSources} />
+            <SourceList
+              sources={sources}
+              label="Connected sources"
+              onRefresh={loadSources}
+            />
           )}
         </section>
       </div>

@@ -6,8 +6,12 @@ interface OllamaOptionProps {
   onSuccess: () => void;
 }
 
-export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Element {
-  const [status, setStatus] = useState<"checking" | "available" | "unavailable">("checking");
+export function OllamaOption({
+  onSuccess,
+}: OllamaOptionProps): React.JSX.Element {
+  const [status, setStatus] = useState<
+    "checking" | "available" | "unavailable"
+  >("checking");
   const [models, setModels] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +67,9 @@ export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Elemen
   }
 
   if (status === "checking") {
-    return <p className="text-sm text-muted-foreground">Checking for Ollama...</p>;
+    return (
+      <p className="text-sm text-muted-foreground">Checking for Ollama...</p>
+    );
   }
 
   if (status === "unavailable") {
@@ -71,7 +77,11 @@ export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Elemen
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">
           Ollama is not running. Install it from{" "}
-          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => window.api.openExternal("https://ollama.com")}>
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-foreground"
+            onClick={() => window.api.openExternal("https://ollama.com")}
+          >
             ollama.com
           </button>
           , then start it and try again.
@@ -83,22 +93,30 @@ export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Elemen
     );
   }
 
-  const embeddingModels = models.filter((m) => m.includes("embed") || m.includes("nomic") || m.includes("mxbai"));
+  const embeddingModels = models.filter(
+    (m) => m.includes("embed") || m.includes("nomic") || m.includes("mxbai"),
+  );
 
   return (
     <div className="space-y-3">
       <p className="text-sm text-success-foreground">Ollama is running.</p>
       {embeddingModels.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">Found embedding models: {embeddingModels.join(", ")}</p>
+          <p className="text-sm text-muted-foreground">
+            Found embedding models: {embeddingModels.join(", ")}
+          </p>
           <Button onClick={handleSelect} className="w-full">
             Use Ollama
           </Button>
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">No embedding models found. Pull one first:</p>
-          <code className="block rounded-md bg-muted p-2 text-sm font-mono">ollama pull nomic-embed-text</code>
+          <p className="text-sm text-muted-foreground">
+            No embedding models found. Pull one first:
+          </p>
+          <code className="block rounded-md bg-muted p-2 text-sm font-mono">
+            ollama pull nomic-embed-text
+          </code>
           <Button variant="outline" onClick={checkOllama} className="w-full">
             Retry
           </Button>

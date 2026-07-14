@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type {
   BlockObjectResponse,
   PageObjectResponse,
+  RichTextItemResponse,
 } from "@notionhq/client/build/src/api-endpoints";
 import {
   blocksToText,
@@ -10,7 +11,7 @@ import {
   NotionConnector,
 } from "../notion";
 
-function makeRichText(text: string) {
+function makeRichText(text: string): RichTextItemResponse[] {
   return [
     {
       type: "text" as const,
@@ -198,7 +199,7 @@ describe("extractPageTitle", () => {
     const page = makePage("p1", "");
     page.properties = {
       name: { id: "n", type: "rich_text", rich_text: [] },
-    } as any;
+    } as unknown as PageObjectResponse["properties"];
     expect(extractPageTitle(page)).toBe("Untitled");
   });
 });
@@ -222,15 +223,19 @@ const mockClient = {
 };
 
 vi.mock("@notionhq/client", () => {
+  const isRecord = (obj: unknown): obj is Record<string, unknown> =>
+    typeof obj === "object" && obj !== null;
+
   return {
     Client: function () {
       return mockClient;
     },
-    isFullPage: (obj: any) => obj?.object === "page" && "url" in obj,
-    isFullDatabase: (obj: any) =>
-      obj?.object === "database" && "data_sources" in obj,
-    isFullDataSource: (obj: any) =>
-      obj?.object === "data_source" && "title" in obj,
+    isFullPage: (obj: unknown): boolean =>
+      isRecord(obj) && obj.object === "page" && "url" in obj,
+    isFullDatabase: (obj: unknown): boolean =>
+      isRecord(obj) && obj.object === "database" && "data_sources" in obj,
+    isFullDataSource: (obj: unknown): boolean =>
+      isRecord(obj) && obj.object === "data_source" && "title" in obj,
     LogLevel: { DEBUG: "debug", INFO: "info", WARN: "warn", ERROR: "error" },
   };
 });
@@ -428,7 +433,9 @@ describe("NotionConnector", () => {
       next_cursor: null,
     });
 
-    const networkError = Object.assign(new Error("Network error"), { status: 500 });
+    const networkError = Object.assign(new Error("Network error"), {
+      status: 500,
+    });
     mockClient.databases.retrieve.mockRejectedValue(networkError);
 
     const connector = new NotionConnector("test-token", "root", 0);
@@ -533,13 +540,15 @@ describe("listNotionItems", () => {
         next_cursor: null,
       })
       .mockResolvedValueOnce({
-        results: [{
-          object: "data_source",
-          id: "ggg-hhh",
-          title: [{ plain_text: "My Database", type: "text" }],
-          database_parent: { type: "workspace", workspace: true },
-          icon: { type: "emoji", emoji: "📊" },
-        }],
+        results: [
+          {
+            object: "data_source",
+            id: "ggg-hhh",
+            title: [{ plain_text: "My Database", type: "text" }],
+            database_parent: { type: "workspace", workspace: true },
+            icon: { type: "emoji", emoji: "📊" },
+          },
+        ],
         has_more: false,
         next_cursor: null,
       });

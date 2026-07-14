@@ -7,8 +7,18 @@ interface CheckboxProps {
   className?: string;
 }
 
-export function Checkbox({ checked, onChange, className }: CheckboxProps): React.JSX.Element {
-  const styles = cn("cursor-pointer flex size-4 shrink-0 items-center justify-center rounded border", checked ? "border-primary bg-primary text-primary-foreground" : "border-input", className);
+export function Checkbox({
+  checked,
+  onChange,
+  className,
+}: CheckboxProps): React.JSX.Element {
+  const styles = cn(
+    "cursor-pointer flex size-4 shrink-0 items-center justify-center rounded border",
+    checked
+      ? "border-primary bg-primary text-primary-foreground"
+      : "border-input",
+    className,
+  );
 
   const icon = checked && <CheckIcon strokeWidth={3} className="size-3" />;
 
@@ -21,7 +31,13 @@ export function Checkbox({ checked, onChange, className }: CheckboxProps): React
   }
 
   return (
-    <button type="button" role="checkbox" aria-checked={checked} onClick={onChange} className={styles}>
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      onClick={onChange}
+      className={styles}
+    >
       {icon}
     </button>
   );

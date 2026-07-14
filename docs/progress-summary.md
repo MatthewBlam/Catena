@@ -959,7 +959,14 @@ Blank div while checking — prevents a flash of the wrong UI.
 
 ```tsx
 if (!ready) {
-  return <OnboardingWizard onComplete={() => { setReady(true); setPage("search"); }} />;
+  return (
+    <OnboardingWizard
+      onComplete={() => {
+        setReady(true);
+        setPage("search");
+      }}
+    />
+  );
 }
 ```
 
@@ -1560,6 +1567,7 @@ Encrypted secrets (`cohere_api_key`, `notion_token`, `google_tokens`) were store
 
 **H5: Embedding dimension mismatch detection**
 After switching embedding providers (e.g. Cohere → Ollama), `cosineSimilarity` would silently compare vectors of different dimensions (1024 vs 768), producing garbage scores. Fixed with two changes:
+
 1. Added `getChunksWithEmbeddingsByModel(db, model, limit?)` in `database.ts` — filters chunks to only those matching the current embedding model via `AND embedding_model = ?`.
 2. Added a dimension assertion at the top of `cosineSimilarity`: throws an explicit error if `a.length !== b.length`.
 3. Updated `search()` in `searcher.ts` to use model-filtered query with `getEmbeddingModelName(embedConfig)`.
@@ -1582,6 +1590,7 @@ The same function was duplicated in `ResultCard.tsx` and `SourceList.tsx`. Creat
 
 **H6: Error handling gaps**
 Three components had uncaught or silently-swallowed async errors:
+
 - `OllamaOption.tsx` — Added `error` state, `.catch()` to the useEffect, try/catch to `checkOllama()` and `handleSelect()`, renders `ErrorBanner` when error is set.
 - `SourceList.tsx` — Added `error` state and a `catch` block to `handleRemove` (previously had try/finally but no catch), renders `ErrorBanner` above the source list.
 - `OnboardingWizard.tsx` — Added `sourceError` state, replaced `.catch(() => {})` with `.catch(() => setSourceError(...))`, renders `ErrorBanner` in the sources step.
@@ -1590,6 +1599,7 @@ Three components had uncaught or silently-swallowed async errors:
 Pages unmounted on tab switch due to conditional `&&` rendering (`{page === "search" && <SearchPage />}`). Search query, results, and scroll position were lost when navigating away and back. Replaced with CSS `display: none` hiding — all three pages are always mounted, only the active one is visible.
 
 **L1: Accessibility basics**
+
 - Added `lang="en"` to `<html>` tag in `index.html`
 - Added `role="alert"` to `ErrorBanner`'s outer div
 - Added `aria-label="Search your documents"` to `SearchInput`'s Input

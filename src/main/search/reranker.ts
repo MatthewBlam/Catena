@@ -32,7 +32,9 @@ export async function rerank(
 
   const data = (await res.json()) as { results?: CohereRerankResult[] };
   if (!data.results || !Array.isArray(data.results)) {
-    throw new Error("Cohere rerank returned invalid response: missing results array");
+    throw new Error(
+      "Cohere rerank returned invalid response: missing results array",
+    );
   }
 
   return data.results

@@ -20,15 +20,22 @@ function StepIndicator({ current }: { current: Step }): React.JSX.Element {
   return (
     <div className="flex items-center gap-1.5">
       {STEPS.map((step, i) => (
-        <div key={step} className={`size-1.5 rounded-full transition-colors ${i <= idx ? "bg-primary" : "bg-muted"}`} />
+        <div
+          key={step}
+          className={`size-1.5 rounded-full transition-colors ${i <= idx ? "bg-primary" : "bg-muted"}`}
+        />
       ))}
     </div>
   );
 }
 
-export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.JSX.Element {
+export function OnboardingWizard({
+  onComplete,
+}: OnboardingWizardProps): React.JSX.Element {
   const [step, setStep] = useState<Step>("welcome");
-  const [providerMode, setProviderMode] = useState<"choose" | "cohere" | "ollama">("choose");
+  const [providerMode, setProviderMode] = useState<
+    "choose" | "cohere" | "ollama"
+  >("choose");
   const [sources, setSources] = useState<SourceWithCount[]>([]);
   const [sourceError, setSourceError] = useState<string | null>(null);
 
@@ -54,9 +61,14 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.J
           <div className="space-y-4">
             <div>
               <h1 className="text-2xl font-semibold">Welcome to Commons</h1>
-              <p className="text-muted-foreground mt-1">Search your club&apos;s docs — Notion pages, Google Drive files, all in one place.</p>
+              <p className="text-muted-foreground mt-1">
+                Search your club&apos;s docs — Notion pages, Google Drive files,
+                all in one place.
+              </p>
             </div>
-            <p className="text-sm text-muted-foreground">We&apos;ll get you set up in a few quick steps.</p>
+            <p className="text-sm text-muted-foreground">
+              We&apos;ll get you set up in a few quick steps.
+            </p>
             <Button onClick={() => setStep("provider")} className="w-full">
               Get started
             </Button>
@@ -66,38 +78,59 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.J
         {step === "provider" && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-xl font-semibold">Choose an embedding provider</h2>
-              <p className="text-muted-foreground text-sm mt-1">Commons needs an embedding provider to search your docs.</p>
+              <h2 className="text-xl font-semibold">
+                Choose an embedding provider
+              </h2>
+              <p className="text-muted-foreground text-sm mt-1">
+                Commons needs an embedding provider to search your docs.
+              </p>
             </div>
 
             {providerMode === "choose" && (
               <div className="space-y-3">
                 <div className="space-y-2">
-                  <Button onClick={() => setProviderMode("cohere")} className="w-full">
+                  <Button
+                    onClick={() => setProviderMode("cohere")}
+                    className="w-full"
+                  >
                     Use Cohere API
                   </Button>
-                  <p className="text-xs text-muted-foreground text-center">Cloud-based, high quality. Free tier available.</p>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Cloud-based, high quality. Free tier available.
+                  </p>
                 </div>
                 <div className="relative">
                   <div className="absolute inset-0 flex items-center">
                     <span className="w-full border-t" />
                   </div>
                   <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-2 text-muted-foreground">or</span>
+                    <span className="bg-background px-2 text-muted-foreground">
+                      or
+                    </span>
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Button variant="outline" onClick={() => setProviderMode("ollama")} className="w-full">
+                  <Button
+                    variant="outline"
+                    onClick={() => setProviderMode("ollama")}
+                    className="w-full"
+                  >
                     Use Ollama (Local)
                   </Button>
-                  <p className="text-xs text-muted-foreground text-center">Runs on your machine. No API key needed.</p>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Runs on your machine. No API key needed.
+                  </p>
                 </div>
               </div>
             )}
 
             {providerMode === "cohere" && (
               <div className="space-y-3">
-                <Button variant="ghost" size="xs" onClick={() => setProviderMode("choose")}>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setProviderMode("choose")}
+                >
                   &larr; Back
                 </Button>
                 <ApiKeyForm onSuccess={goToSources} />
@@ -106,7 +139,11 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.J
 
             {providerMode === "ollama" && (
               <div className="space-y-3">
-                <Button variant="ghost" size="xs" onClick={() => setProviderMode("choose")}>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setProviderMode("choose")}
+                >
                   &larr; Back
                 </Button>
                 <OllamaOption onSuccess={goToSources} />
@@ -119,7 +156,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.J
           <div className="space-y-4">
             <div>
               <h2 className="text-xl font-semibold">Connect your docs</h2>
-              <p className="text-muted-foreground text-sm mt-1">Add at least one source to start searching.</p>
+              <p className="text-muted-foreground text-sm mt-1">
+                Add at least one source to start searching.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -127,20 +166,35 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.J
               <ConnectDriveButton onSourceAdded={loadSources} />
             </div>
 
-            {sourceError && <ErrorBanner variant="error">{sourceError}</ErrorBanner>}
+            {sourceError && (
+              <ErrorBanner variant="error">{sourceError}</ErrorBanner>
+            )}
 
             {sources.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-xs font-medium text-muted-foreground">Connected</h3>
+                <h3 className="text-xs font-medium text-muted-foreground">
+                  Connected
+                </h3>
                 <SourceList sources={sources} onRefresh={loadSources} />
               </div>
             )}
 
             <div className="flex gap-2 pt-2">
-              <Button variant="ghost" size="xs" onClick={() => { setProviderMode("choose"); setStep("provider"); }}>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  setProviderMode("choose");
+                  setStep("provider");
+                }}
+              >
                 &larr; Back
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setStep("done")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setStep("done")}
+              >
                 Skip for now
               </Button>
               {sources.length > 0 && (
@@ -157,7 +211,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps): React.J
             <div>
               <h2 className="text-xl font-semibold">You&apos;re all set!</h2>
               <p className="text-muted-foreground text-sm mt-1">
-                {sources.length > 0 ? "Sync your sources, then search across all your docs." : "You can connect sources later from the Sources tab."}
+                {sources.length > 0
+                  ? "Sync your sources, then search across all your docs."
+                  : "You can connect sources later from the Sources tab."}
               </p>
             </div>
             <Button onClick={onComplete} className="w-full">

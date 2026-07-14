@@ -123,9 +123,12 @@ export async function startGoogleOAuth(
         const { tokens } = await client.getToken({ code, codeVerifier });
         client.setCredentials(tokens);
 
-        const infoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-          headers: { Authorization: `Bearer ${tokens.access_token}` },
-        });
+        const infoRes = await fetch(
+          "https://www.googleapis.com/oauth2/v2/userinfo",
+          {
+            headers: { Authorization: `Bearer ${tokens.access_token}` },
+          },
+        );
         const userInfo = (await infoRes.json()) as { email?: string };
         const email = userInfo.email ?? "Unknown";
 
