@@ -5,10 +5,11 @@ import {
   activeSyncs,
   buildEmbedConfig,
   getConnectorForSource,
+  recordSyncOutcome,
   registerSync,
+  type SyncOutcomeInput,
 } from "../ipc/sync-handlers";
 import { syncSource } from "./sync-manager";
-import type { SyncProgress } from "../../shared/types";
 import { track } from "../telemetry/posthog";
 
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
@@ -93,15 +94,19 @@ class SyncScheduler {
   }
 
   private async tick(): Promise<void> {
-    if (this.running || !this.db) return;
+    // Captured once. `stop()` nulls `this.db` while we are awaiting, and every
+    // `this.db!` below would then hand `null` to `getConnectorForSource` and
+    // report a bogus "Auto-sync failed" for every remaining source.
+    const db = this.db;
+    if (this.running || !db) return;
     this.running = true;
     this.abortController = new AbortController();
     const { signal } = this.abortController;
     let anySuccess = false;
 
     try {
-      const sources = getAllSources(this.db);
-      const embedConfig = buildEmbedConfig(this.db);
+      const sources = getAllSources(db);
+      const embedConfig = buildEmbedConfig(db);
 
       for (const source of sources) {
         if (signal.aborted) break;
@@ -113,9 +118,9 @@ class SyncScheduler {
         });
 
         const syncStart = Date.now();
-        const syncState = {
-          lastProgress: null as SyncProgress | null,
-          error: false,
+        const syncState: SyncOutcomeInput = {
+          lastProgress: null,
+          thrown: undefined,
         };
 
         track("commons_sync_started", {
@@ -124,10 +129,10 @@ class SyncScheduler {
         });
 
         try {
-          const connector = await getConnectorForSource(this.db!, source);
+          const connector = await getConnectorForSource(db, source);
           const sender = BrowserWindow.getAllWindows()[0]?.webContents;
           await syncSource(
-            this.db!,
+            db,
             source.id,
             source.provider,
             connector,
@@ -144,12 +149,18 @@ class SyncScheduler {
           );
           anySuccess = true;
         } catch (err) {
-          syncState.error = true;
+          syncState.thrown = err;
           console.error(`Auto-sync failed for source ${source.id}:`, err);
         } finally {
           // `finish` resolves the promise `cancelSync` is blocked on, so it has
-          // to run even if telemetry throws.
+          // to run even if anything here throws.
           try {
+            recordSyncOutcome(
+              db,
+              source.id,
+              syncState,
+              controller.signal.aborted,
+            );
             track("commons_sync_completed", {
               source_provider: source.provider,
               trigger: "auto",
@@ -157,7 +168,7 @@ class SyncScheduler {
               doc_count: syncState.lastProgress?.current ?? 0,
               skipped_count: syncState.lastProgress?.skipped ?? 0,
               error_count: syncState.lastProgress?.errors.length ?? 0,
-              phase: syncState.error ? "error" : "done",
+              phase: syncState.thrown !== undefined ? "error" : "done",
               embedding_provider: embedConfig.provider,
             });
           } finally {
@@ -166,9 +177,9 @@ class SyncScheduler {
         }
       }
     } finally {
-      if (anySuccess && this.db) {
+      if (anySuccess) {
         this.lastSyncedAt = new Date().toISOString();
-        upsertSetting(this.db, "auto_sync_last_synced_at", this.lastSyncedAt);
+        upsertSetting(db, "auto_sync_last_synced_at", this.lastSyncedAt);
       }
       this.running = false;
       this.abortController = null;

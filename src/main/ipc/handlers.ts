@@ -240,14 +240,9 @@ export function registerIpcHandlers(): void {
 
     track("commons_source_added", { source_provider: provider });
 
-    return {
-      id,
-      provider: config.provider,
-      name: config.provider === "notion" ? config.name : config.folderName,
-      rootExternalId:
-        config.provider === "notion" ? config.rootPageId : config.folderId,
-      createdAt: now,
-    };
+    // Read it back rather than reconstructing it: the row carries sync-state
+    // columns now, and a hand-built object would quietly omit them.
+    return getSourceById(db, id);
   });
 
   ipcMain.handle("sources:remove", async (_, id: string) => {

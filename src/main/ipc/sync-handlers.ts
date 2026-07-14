@@ -1,6 +1,10 @@
 import { ipcMain, type WebContents } from "electron";
 import { getDb } from "../db/singleton";
-import { getSourceById } from "../db/database";
+import {
+  getSourceById,
+  updateSourceSyncState,
+  type SyncOutcome,
+} from "../db/database";
 import { loadSecret } from "../auth/storage";
 import { getSetting } from "../db/database";
 import { syncSource, type Connector } from "../sync/sync-manager";
@@ -102,6 +106,66 @@ export async function cancelAllSyncs(): Promise<void> {
   await Promise.all([...activeSyncs.keys()].map((id) => cancelSync(id)));
 }
 
+/** Enough to diagnose the failure; not enough to turn the column into a log file. */
+const MAX_STORED_ERRORS = 5;
+
+/** What a sync's owner knows about how it went. Both call sites accumulate this. */
+export interface SyncOutcomeInput {
+  lastProgress: SyncProgress | null;
+  /** The error that escaped the sync, if one did. */
+  thrown: unknown;
+}
+
+/**
+ * Records how a sync ended, from its *owner's* vantage point.
+ *
+ * Deliberately not inside `syncSource`: `syncSource` cannot observe a failure in
+ * `getConnectorForSource` — an expired Notion token, missing Google credentials —
+ * because it never gets called. That is exactly the failure a user most needs to
+ * see, and in that case there is no progress object either, so the message has to
+ * come from the thrown error.
+ */
+export function recordSyncOutcome(
+  db: ReturnType<typeof getDb>,
+  sourceId: string,
+  outcome: SyncOutcomeInput,
+  aborted: boolean,
+): void {
+  const thrownMessage =
+    outcome.thrown === undefined
+      ? null
+      : outcome.thrown instanceof Error
+        ? outcome.thrown.message
+        : String(outcome.thrown);
+
+  // The thrown error goes first: it is the one that explains why the rest is
+  // missing. Per-document errors follow.
+  const errors = [
+    ...(thrownMessage ? [thrownMessage] : []),
+    ...(outcome.lastProgress?.errors ?? []),
+  ];
+
+  let status: SyncOutcome;
+  if (aborted) {
+    // The user asked for this. It is not a failure, whatever else happened.
+    status = "cancelled";
+  } else if (thrownMessage !== null) {
+    status = "error";
+  } else if (errors.length > 0) {
+    status = "partial";
+  } else {
+    status = "ok";
+  }
+
+  updateSourceSyncState(db, sourceId, {
+    lastSyncAt: new Date().toISOString(),
+    lastSyncStatus: status,
+    lastSyncError: errors.slice(0, MAX_STORED_ERRORS).join("\n") || null,
+    // The full count, not the truncated one — "3 of 47 failed" needs the 47.
+    lastSyncErrorCount: errors.length,
+  });
+}
+
 export function buildEmbedConfig(db: ReturnType<typeof getDb>): EmbedConfig {
   const provider = (getSetting(db, "embedding_provider") ?? "cohere") as
     | "cohere"
@@ -160,9 +224,9 @@ export function registerSyncHandlers(): void {
 
     const embedConfig = buildEmbedConfig(db);
     const startMs = Date.now();
-    const syncState = {
-      lastProgress: null as SyncProgress | null,
-      error: false,
+    const syncState: SyncOutcomeInput = {
+      lastProgress: null,
+      thrown: undefined,
     };
 
     track("commons_sync_started", {
@@ -191,12 +255,15 @@ export function registerSyncHandlers(): void {
         controller.signal,
       );
     } catch (err) {
-      syncState.error = true;
+      syncState.thrown = err;
       throw err;
     } finally {
       // `finish` resolves the promise `cancelSync` is blocked on, so it has to
-      // run even if telemetry throws — otherwise a cancel hangs for 15 seconds.
+      // run even if anything here throws — otherwise a cancel hangs for 15
+      // seconds. And the outcome has to be written before `finish`, or
+      // `sources:remove` could delete the row between the two.
       try {
+        recordSyncOutcome(db, sourceId, syncState, controller.signal.aborted);
         track("commons_sync_completed", {
           source_provider: source.provider,
           trigger: "manual",
@@ -204,7 +271,7 @@ export function registerSyncHandlers(): void {
           doc_count: syncState.lastProgress?.current ?? 0,
           skipped_count: syncState.lastProgress?.skipped ?? 0,
           error_count: syncState.lastProgress?.errors.length ?? 0,
-          phase: syncState.error ? "error" : "done",
+          phase: syncState.thrown !== undefined ? "error" : "done",
           embedding_provider: embedConfig.provider,
         });
       } finally {

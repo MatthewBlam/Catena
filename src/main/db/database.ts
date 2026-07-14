@@ -1,8 +1,11 @@
 import type Database from "better-sqlite3";
+import type { SyncOutcome } from "../../shared/types";
 
 // --- Sources ---
 
-export type SyncOutcome = "ok" | "partial" | "error" | "cancelled";
+// Defined in shared/types so the renderer can name it too; re-exported here
+// because this is where every writer of the column lives.
+export type { SyncOutcome };
 
 export interface SourceRow {
   id: string;

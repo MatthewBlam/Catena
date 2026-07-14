@@ -1,9 +1,23 @@
+/**
+ * How a source's last sync ended.
+ *
+ * `partial` means the sync ran to completion but some documents failed;
+ * `error` means the sync itself did not run (an expired token, a missing
+ * connector) or died outright. The distinction matters to the user: `partial`
+ * leaves a usable index behind, `error` does not.
+ */
+export type SyncOutcome = "ok" | "partial" | "error" | "cancelled";
+
 export interface Source {
   id: string;
   provider: "notion" | "google_drive";
   name: string;
   rootExternalId: string;
   createdAt: string;
+  lastSyncAt: string | null;
+  lastSyncStatus: SyncOutcome | null;
+  lastSyncError: string | null;
+  lastSyncErrorCount: number;
 }
 
 export interface Document {
