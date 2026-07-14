@@ -2,7 +2,7 @@ export {};
 
 interface CommonsAPI {
   saveSecret(key: string, value: string): Promise<void>;
-  loadSecret(key: string): Promise<string | null>;
+  /** No `loadSecret` counterpart, by design — see the preload. Use `hasSecret`. */
   validateCohereKey(key: string): Promise<{ valid: boolean }>;
   checkOllama(): Promise<{ available: boolean; models: string[] }>;
   getEmbeddingProvider(): Promise<string>;

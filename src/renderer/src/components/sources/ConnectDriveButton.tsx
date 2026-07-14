@@ -15,13 +15,15 @@ export function ConnectDriveButton({
 
   async function handleConnect(): Promise<void> {
     setError(null);
-    const existing = await window.api.loadSecret("google_tokens");
-    if (existing) {
-      setStep("pick");
-      return;
-    }
-    setStep("waiting");
     try {
+      // See ConnectNotionButton: hasSecret keeps the raw OAuth tokens out of
+      // renderer memory, and moving the call inside the try means a failure here
+      // shows an error instead of silently killing the button.
+      if (await window.api.hasSecret("google_tokens")) {
+        setStep("pick");
+        return;
+      }
+      setStep("waiting");
       await window.api.startGoogleOAuth();
       setStep("pick");
     } catch (err) {

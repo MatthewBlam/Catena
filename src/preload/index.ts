@@ -3,8 +3,11 @@ import { contextBridge, ipcRenderer } from "electron";
 const api = {
   saveSecret: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke("secrets:save", key, value),
-  loadSecret: (key: string): Promise<string | null> =>
-    ipcRenderer.invoke("secrets:load", key),
+  // There is deliberately no `loadSecret`. Every renderer caller only ever asked
+  // "is there a key?", and answering that by shipping the plaintext key across the
+  // bridge put API keys and raw OAuth tokens in renderer memory for no reason.
+  // `hasSecret` answers the actual question. Removing the channel rather than just
+  // its callers is the point: nothing can quietly reintroduce it.
   validateCohereKey: (key: string): Promise<{ valid: boolean }> =>
     ipcRenderer.invoke("auth:validate-cohere", key),
   checkOllama: (): Promise<{ available: boolean; models: string[] }> =>

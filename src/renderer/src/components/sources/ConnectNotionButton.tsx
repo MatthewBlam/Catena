@@ -15,13 +15,20 @@ export function ConnectNotionButton({
 
   async function handleConnect(): Promise<void> {
     setError(null);
-    const existing = await window.api.loadSecret("notion_token");
-    if (existing) {
-      setStep("pick");
-      return;
-    }
-    setStep("waiting");
     try {
+      // Two changes here. hasSecret rather than loadSecret: we only need to know
+      // *whether* a token exists, and loadSecret would pull the raw OAuth token
+      // across the context bridge into renderer memory to answer that.
+      //
+      // And inside the try, where it always belonged. handleConnect is a floating
+      // promise off onClick, so a throw out here — hasSecret rejects on an unknown
+      // key, and the DB can be locked — rejected it unhandled and left the button
+      // simply dead: no spinner, no error, nothing.
+      if (await window.api.hasSecret("notion_token")) {
+        setStep("pick");
+        return;
+      }
+      setStep("waiting");
       await window.api.startNotionOAuth();
       setStep("pick");
     } catch (err) {

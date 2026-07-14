@@ -76,8 +76,10 @@ function App(): React.JSX.Element {
           setReady(true);
           return;
         }
-        const key = await window.api.loadSecret("cohere_api_key");
-        const isReady = key !== null;
+        // hasSecret, not loadSecret: all we need is whether a key exists, and
+        // loadSecret would hand the plaintext key across the context bridge into
+        // renderer memory to answer a yes/no question.
+        const isReady = await window.api.hasSecret("cohere_api_key");
         setReady(isReady);
         if (!isReady) setVisited(new Set(["search"]));
       })

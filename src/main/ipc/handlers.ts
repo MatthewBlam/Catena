@@ -74,11 +74,9 @@ export function registerIpcHandlers(): void {
     saveSecret(getDb(), key, value);
   });
 
-  ipcMain.handle("secrets:load", (_, key: string) => {
-    if (!ALLOWED_SECRET_KEYS.has(key))
-      throw new Error(`Unknown secret key: ${key}`);
-    return loadSecret(getDb(), key);
-  });
+  // No `secrets:load` channel (H10). A renderer that can ask for a secret's
+  // plaintext will eventually be made to; every caller only wanted `secrets:has`.
+  // `loadSecret` stays available to main, which genuinely needs the values.
 
   ipcMain.handle("secrets:delete", (_, key: string) => {
     if (!ALLOWED_SECRET_KEYS.has(key))
