@@ -146,13 +146,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("auth:notion-oauth-start", async () => {
     const clientId = process.env.NOTION_CLIENT_ID;
-    const clientSecret = process.env.NOTION_CLIENT_SECRET;
-    if (!clientId || !clientSecret) {
+    // The client *secret* is deliberately not here. It lives in the Worker at
+    // NOTION_TOKEN_PROXY_URL, which is the only party that can exchange a code.
+    const tokenProxyUrl = process.env.NOTION_TOKEN_PROXY_URL;
+    if (!clientId || !tokenProxyUrl) {
       throw new Error(
-        "Notion OAuth credentials not configured. Set NOTION_CLIENT_ID and NOTION_CLIENT_SECRET environment variables.",
+        "Notion OAuth is not configured. Set NOTION_CLIENT_ID and NOTION_TOKEN_PROXY_URL (see worker/README.md).",
       );
     }
-    const result = await startNotionOAuth(clientId, clientSecret);
+    const result = await startNotionOAuth(clientId, tokenProxyUrl);
     saveSecret(getDb(), "notion_token", result.accessToken);
     return { workspaceName: result.workspaceName };
   });

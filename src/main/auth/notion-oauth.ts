@@ -3,9 +3,13 @@ import crypto from "node:crypto";
 import { shell } from "electron";
 
 const REDIRECT_PORT = 21337;
+/**
+ * Also pinned in `worker/src/index.ts` and registered in the Notion console.
+ * All three must agree — Notion validates the value the token exchange sends
+ * against the one the authorize request used.
+ */
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`;
 const NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize";
-const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
 
 export interface NotionOAuthResult {
   accessToken: string;
@@ -31,9 +35,17 @@ export function cancelNotionOAuth(): void {
   reject?.(new Error("OAuth canceled"));
 }
 
+/**
+ * @param clientId Not confidential — it is in the authorize URL the user's browser
+ *   loads, and shipping it is expected.
+ * @param tokenProxyUrl The Cloudflare Worker in `worker/`. Notion's token endpoint
+ *   requires Basic auth from the client *secret* and has no public-client mode, so
+ *   the exchange cannot happen here: a secret in an Electron bundle is not a secret.
+ *   See `worker/README.md`.
+ */
 export async function startNotionOAuth(
   clientId: string,
-  clientSecret: string,
+  tokenProxyUrl: string,
 ): Promise<NotionOAuthResult> {
   cleanupActiveOAuth();
 
@@ -106,16 +118,15 @@ export async function startNotionOAuth(
           return;
         }
 
-        const tokenRes = await fetch(NOTION_TOKEN_URL, {
+        // No Authorization header and no redirect_uri: the Worker supplies the
+        // first from its own secret and pins the second. Everything we send here
+        // is either public (the code, single-use and already bound to our
+        // client_id) or ours to prove (the PKCE verifier).
+        const tokenRes = await fetch(tokenProxyUrl, {
           method: "POST",
-          headers: {
-            Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            grant_type: "authorization_code",
             code,
-            redirect_uri: REDIRECT_URI,
             code_verifier: codeVerifier,
           }),
         });

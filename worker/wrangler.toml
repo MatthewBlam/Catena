@@ -1,0 +1,12 @@
+name = "commons-notion-auth"
+main = "src/index.ts"
+compatibility_date = "2026-07-13"
+
+# No [vars] block, by design. Both values below are set as encrypted secrets and
+# never live in this file:
+#
+#   pnpm dlx wrangler secret put NOTION_CLIENT_ID
+#   pnpm dlx wrangler secret put NOTION_CLIENT_SECRET
+#
+# The client *id* is not confidential (the app ships it), but keeping the pair
+# together means there is exactly one place to look when rotating.

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // WebWorker, not DOM: it supplies Request/Response/fetch/btoa without
+    // pulling in a `document` this code has no business touching. Avoiding
+    // @cloudflare/workers-types keeps the worker dependency-free.
+    "lib": ["ES2022", "WebWorker"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*"]
+}
