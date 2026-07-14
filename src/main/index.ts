@@ -135,7 +135,13 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  cancelAllSyncs();
+  // `will-quit` cannot await. `cancelAllSyncs` aborts every controller
+  // synchronously before its first `await`, so the abort itself does land; we
+  // are only declining to wait for the unwind, which the dying process makes
+  // moot. Everything below is safe against an in-flight statement because
+  // better-sqlite3 is synchronous — there is no such thing as a half-applied
+  // transaction to close the database on top of.
+  void cancelAllSyncs();
   syncScheduler.stop();
   shutdownTelemetry();
   closeDb();

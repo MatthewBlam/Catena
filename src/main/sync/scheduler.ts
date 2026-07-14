@@ -5,6 +5,7 @@ import {
   activeSyncs,
   buildEmbedConfig,
   getConnectorForSource,
+  registerSync,
 } from "../ipc/sync-handlers";
 import { syncSource } from "./sync-manager";
 import type { SyncProgress } from "../../shared/types";
@@ -106,8 +107,7 @@ class SyncScheduler {
         if (signal.aborted) break;
         if (activeSyncs.has(source.id)) continue;
 
-        const controller = new AbortController();
-        activeSyncs.set(source.id, controller);
+        const { controller, finish } = registerSync(source.id);
         signal.addEventListener("abort", () => controller.abort(), {
           once: true,
         });
@@ -147,17 +147,22 @@ class SyncScheduler {
           syncState.error = true;
           console.error(`Auto-sync failed for source ${source.id}:`, err);
         } finally {
-          activeSyncs.delete(source.id);
-          track("commons_sync_completed", {
-            source_provider: source.provider,
-            trigger: "auto",
-            duration_ms: Date.now() - syncStart,
-            doc_count: syncState.lastProgress?.current ?? 0,
-            skipped_count: syncState.lastProgress?.skipped ?? 0,
-            error_count: syncState.lastProgress?.errors.length ?? 0,
-            phase: syncState.error ? "error" : "done",
-            embedding_provider: embedConfig.provider,
-          });
+          // `finish` resolves the promise `cancelSync` is blocked on, so it has
+          // to run even if telemetry throws.
+          try {
+            track("commons_sync_completed", {
+              source_provider: source.provider,
+              trigger: "auto",
+              duration_ms: Date.now() - syncStart,
+              doc_count: syncState.lastProgress?.current ?? 0,
+              skipped_count: syncState.lastProgress?.skipped ?? 0,
+              error_count: syncState.lastProgress?.errors.length ?? 0,
+              phase: syncState.error ? "error" : "done",
+              embedding_provider: embedConfig.provider,
+            });
+          } finally {
+            finish();
+          }
         }
       }
     } finally {

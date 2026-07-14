@@ -30,7 +30,7 @@ import { listDriveItems } from "../connectors/drive";
 import { getEmbeddingModelName } from "../search/embedder";
 import type { EmbedConfig } from "../search/embedder";
 import type { SourceConfig } from "../../shared/types";
-import { activeSyncs, cancelAllSyncs, buildEmbedConfig } from "./sync-handlers";
+import { cancelSync, cancelAllSyncs, buildEmbedConfig } from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
 import {
   track,
@@ -250,10 +250,13 @@ export function registerIpcHandlers(): void {
     };
   });
 
-  ipcMain.handle("sources:remove", (_, id: string) => {
+  ipcMain.handle("sources:remove", async (_, id: string) => {
     const db = getDb();
     const source = getSourceById(db, id);
-    activeSyncs.get(id)?.abort();
+    // Aborting is cooperative: it asks the sync to stop, it does not stop it.
+    // Deleting the source row while the sync is still inserting documents into
+    // it hits a dangling foreign key, so wait for the unwind to finish first.
+    await cancelSync(id);
     deleteSource(db, id);
     if (source) {
       track("commons_source_removed", { source_provider: source.provider });
@@ -273,12 +276,25 @@ export function registerIpcHandlers(): void {
     return { ...stats, dbSizeBytes };
   });
 
-  ipcMain.handle("app:clear-all-data", () => {
+  ipcMain.handle("app:clear-all-data", async () => {
     track("commons_data_cleared");
-    cancelAllSyncs();
+
+    // Order matters. `cancelAllSyncs` only waits for the syncs that are running
+    // *right now*, and the scheduler works through its sources one at a time —
+    // so a live tick would start the next source's sync while we wait for the
+    // current one, and we would wipe the database out from under it. Stopping
+    // the scheduler first closes that window: `tick` re-checks its abort signal
+    // before each source, with no `await` between the check and registration.
+    syncScheduler.stop();
+    await cancelAllSyncs();
+
     const db = getDb();
     clearAllData(db);
     initTelemetry(db);
+
+    // `clearAllData` just wiped the `auto_sync_*` settings; the stopped
+    // scheduler is still holding the old values in memory.
+    syncScheduler.start(db);
   });
 
   ipcMain.handle("embedding:health", () => {
