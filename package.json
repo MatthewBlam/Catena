@@ -4,8 +4,16 @@
   "description": "Search your club's docs — local-first RAG for student organizations",
   "type": "module",
   "main": "./dist/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "Matthew Blam",
+  "license": "MIT",
+  "homepage": "https://github.com/MatthewBlam/commons-app#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MatthewBlam/commons-app.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MatthewBlam/commons-app/issues"
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",

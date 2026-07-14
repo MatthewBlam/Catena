@@ -1,9 +1,13 @@
 node_modules/
 out/
 dist/
+.vite/
+coverage/
 *.db
 *.db-wal
 *.db-shm
 .env
 .env.local
 .eslintcache
+*.tsbuildinfo
+.DS_Store
