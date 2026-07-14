@@ -347,7 +347,13 @@ describe("DriveConnector", () => {
     expect(docs).toHaveLength(0);
   });
 
-  it("skips files with empty content", async () => {
+  /**
+   * Same blind spot as Notion's: a supported file whose text was deleted exports
+   * as "", and treating that as "nothing to index" left its old chunks in place
+   * forever. An empty *supported* file is a content change; only an unsupported
+   * type is a non-document.
+   */
+  it("yields supported files that are now empty so their chunks can be cleared", async () => {
     mockFilesList.mockResolvedValue({
       data: {
         files: [makeDriveFile()],
@@ -362,7 +368,8 @@ describe("DriveConnector", () => {
       docs.push(doc);
     }
 
-    expect(docs).toHaveLength(0);
+    expect(docs).toHaveLength(1);
+    expect(docs[0].content).toBe("");
   });
 
   it("handles PDF files", async () => {

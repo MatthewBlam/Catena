@@ -191,7 +191,10 @@ export class DriveConnector implements Connector {
         );
         continue;
       }
-      if (!content) continue;
+      // `null` means "no text can be extracted from this type"; `""` means "this
+      // file is supported and is now empty", which is a content change we have to
+      // propagate — otherwise an emptied doc keeps its old chunks forever.
+      if (content === null) continue;
       yield {
         externalId: file.id,
         title: file.name,
@@ -203,6 +206,12 @@ export class DriveConnector implements Connector {
     }
   }
 
+  /**
+   * Returns `null` only when the file's type carries no extractable text. An
+   * empty string means the file is supported and genuinely has no content — the
+   * two must stay distinguishable, or a document emptied upstream looks like an
+   * unsupported one and silently keeps the chunks it no longer has text for.
+   */
   private async extractContent(
     file: drive_v3.Schema$File,
   ): Promise<string | null> {
@@ -215,7 +224,7 @@ export class DriveConnector implements Connector {
           mimeType: "text/plain",
         }),
       );
-      return (res.data as string) || null;
+      return (res.data as string) ?? "";
     }
 
     if (mime === "application/vnd.google-apps.spreadsheet") {
@@ -225,7 +234,7 @@ export class DriveConnector implements Connector {
           mimeType: "text/csv",
         }),
       );
-      return (res.data as string) || null;
+      return (res.data as string) ?? "";
     }
 
     if (mime === "application/vnd.google-apps.presentation") {
@@ -235,7 +244,7 @@ export class DriveConnector implements Connector {
           mimeType: "text/plain",
         }),
       );
-      return (res.data as string) || null;
+      return (res.data as string) ?? "";
     }
 
     if (mime === "application/pdf") {
@@ -251,7 +260,7 @@ export class DriveConnector implements Connector {
       });
       const result = await parser.getText({ last: MAX_PDF_PAGES });
       await parser.destroy();
-      return result.text || null;
+      return result.text ?? "";
     }
 
     if (
@@ -268,7 +277,7 @@ export class DriveConnector implements Connector {
       const result = await cachedMammoth.extractRawText({
         buffer: Buffer.from(res.data as ArrayBuffer),
       });
-      return result.value || null;
+      return result.value ?? "";
     }
 
     if (mime === "text/plain" || mime === "text/markdown") {
@@ -279,7 +288,7 @@ export class DriveConnector implements Connector {
           supportsAllDrives: true,
         }),
       );
-      return (res.data as string) || null;
+      return (res.data as string) ?? "";
     }
 
     return null;

@@ -383,7 +383,13 @@ describe("NotionConnector", () => {
     expect(docs.length).toBeLessThanOrEqual(11);
   });
 
-  it("skips pages with empty content", async () => {
+  /**
+   * The old behaviour — not yielding a page with no text — meant a page whose
+   * body was *deleted* was never yielded, so its chunks stayed in the index
+   * forever. Reconciliation cannot catch that: the page still exists. Yielding
+   * empty content lets sync-manager's zero-chunk path clear it.
+   */
+  it("yields pages with empty content so their chunks can be cleared", async () => {
     mockClient.pages.retrieve.mockResolvedValue(makePage("root", "Empty Page"));
     mockClient.blocks.children.list.mockResolvedValue({
       results: [],
@@ -397,7 +403,9 @@ describe("NotionConnector", () => {
       docs.push(doc);
     }
 
-    expect(docs).toHaveLength(0);
+    expect(docs).toHaveLength(1);
+    expect(docs[0].externalId).toBe("root");
+    expect(docs[0].content).toBe("");
   });
 
   it("skips databases with 403 permission errors", async () => {

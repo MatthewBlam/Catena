@@ -86,17 +86,18 @@ export class NotionConnector implements Connector {
     const blocks = await this.fetchAllBlocks(pageId);
 
     if (!unchanged) {
-      const content = blocksToText(blocks);
-      if (content.trim()) {
-        yield {
-          externalId: pageId,
-          title,
-          url,
-          mimeType: "text/plain",
-          modifiedAt: page.last_edited_time ?? null,
-          content,
-        };
-      }
+      // Yield even when the body is empty. Gating on `content.trim()` meant a page
+      // whose text was deleted was never yielded, so its old chunks stayed in the
+      // index forever — and reconciliation cannot help, because the page is still
+      // very much there. The zero-chunk path in sync-manager clears them.
+      yield {
+        externalId: pageId,
+        title,
+        url,
+        mimeType: "text/plain",
+        modifiedAt: page.last_edited_time ?? null,
+        content: blocksToText(blocks),
+      };
     }
 
     for (const block of blocks) {
