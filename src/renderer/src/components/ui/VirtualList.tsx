@@ -73,16 +73,25 @@ export function VirtualList<T>({
     };
   }, []);
 
-  // All rows share a height; measure one real row and adopt it. A callback ref
-  // (not an effect) fires whenever the measured row mounts — including the first
-  // time rows appear after a loading state — and the tolerance stops it looping.
+  // All rows share a height; measure one real row exactly once and lock it in.
+  // A callback ref (not an effect) fires when the first row mounts — including
+  // the first time rows appear after a loading/empty state — but it records the
+  // height only on the first positive reading.
+  //
+  // It must NOT keep re-measuring: `start` (which row sits at i===0) depends on
+  // `rowHeight`, so writing a new height re-selects the measured row, and
+  // `getBoundingClientRect().height` is the painted, device-pixel-rounded height
+  // that shifts with a row's sub-pixel `translateY`. While scrolled, those never
+  // agree, so the ref re-fired forever — "Maximum update depth exceeded". We read
+  // `offsetHeight` (the integer layout height, independent of the transform) and
+  // stop after the first row we successfully measure.
+  const measured = useRef(false);
   const measureRow = useCallback((el: HTMLDivElement | null) => {
-    if (!el) return;
-    const measured = el.getBoundingClientRect().height;
-    if (measured > 0) {
-      setRowHeight((prev) =>
-        Math.abs(measured - prev) > 0.5 ? measured : prev,
-      );
+    if (!el || measured.current) return;
+    const height = el.offsetHeight;
+    if (height > 0) {
+      measured.current = true;
+      setRowHeight(height);
     }
   }, []);
 

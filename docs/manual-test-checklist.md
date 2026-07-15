@@ -264,7 +264,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 ### Dev Workflow
 
 - [ ] `pnpm dev` launches the app without errors
-- [ ] `pnpm test` runs all tests (expect 263 passing)
+- [ ] `pnpm test` runs all tests (expect 264 passing)
 - [ ] `pnpm test` followed by `pnpm dev` works without ABI crash (posttest hook rebuilds for Electron)
 
 ### Production Build
