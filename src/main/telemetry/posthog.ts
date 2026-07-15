@@ -55,7 +55,11 @@ export function isTelemetryEnabled(): boolean {
   return enabled;
 }
 
-export function shutdownTelemetry(): void {
-  client?.shutdown();
+export function shutdownTelemetry(): Promise<void> {
+  // Return the flush promise so a caller on `will-quit` can await the buffered
+  // events actually leaving before the process dies. Bounded internally (2s) so
+  // a dead network cannot hang shutdown; the caller caps the total wait too.
+  const pending = client?.shutdown(2000);
   client = null;
+  return Promise.resolve(pending);
 }

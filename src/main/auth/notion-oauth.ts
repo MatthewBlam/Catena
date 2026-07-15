@@ -19,11 +19,18 @@ export interface NotionOAuthResult {
 let activeServer: http.Server | null = null;
 let activeReject: ((err: Error) => void) | null = null;
 let activeFlowId: string | null = null;
+let activeTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function cleanupActiveOAuth(): void {
   if (activeServer) {
     activeServer.close();
     activeServer = null;
+  }
+  // A completed flow left this 5-minute timer armed, holding a handle (and
+  // keeping the event loop alive) for five minutes after every success.
+  if (activeTimeout) {
+    clearTimeout(activeTimeout);
+    activeTimeout = null;
   }
   activeReject = null;
   activeFlowId = null;
@@ -187,7 +194,7 @@ export async function startNotionOAuth(
       shell.openExternal(authUrl);
     });
 
-    setTimeout(() => {
+    activeTimeout = setTimeout(() => {
       if (activeFlowId === flowId) {
         safeReject(new Error("OAuth timed out after 5 minutes"));
       }
