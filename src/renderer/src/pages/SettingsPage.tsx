@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { SunIcon, MoonIcon } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
@@ -20,7 +20,9 @@ function formatBytes(bytes: number): string {
 }
 
 function formatRelativeTime(iso: string): string {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const ms = new Date(iso).getTime();
+  if (isNaN(ms)) return "recently";
+  const seconds = Math.floor((Date.now() - ms) / 1000);
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -56,36 +58,66 @@ export function SettingsPage({
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevVisibleRef = useRef(false);
 
+  // Every reader of settings state in one place, so anything that changes it —
+  // becoming visible, clearing all data — can put the UI back in sync with a
+  // single call instead of hand-patching individual fields.
+  const refresh = useCallback((): void => {
+    Promise.all([
+      window.api.getEmbeddingProvider(),
+      window.api.hasSecret("cohere_api_key"),
+      window.api.getStorageStats(),
+      window.api.getAutoSync(),
+      window.api.hasSecret("notion_token"),
+      window.api.hasSecret("google_tokens"),
+      window.api.getTelemetryEnabled(),
+    ])
+      .then(([p, keyPresent, s, sync, notion, drive, telemetry]) => {
+        setProvider(p);
+        setHasKey(keyPresent);
+        setStats(s);
+        setAutoSyncEnabled(sync.enabled);
+        setAutoSyncInterval(sync.intervalMs);
+        setLastSyncedAt(sync.lastSyncedAt);
+        setAutoSyncing(sync.syncing);
+        setHasNotion(notion);
+        setHasDrive(drive);
+        setTelemetryEnabled(telemetry);
+        setLoadError(null);
+      })
+      .catch(() => {
+        setLoadError("Failed to load settings.");
+      });
+  }, []);
+
   useEffect(() => {
     if (visible && !prevVisibleRef.current) {
-      Promise.all([
-        window.api.getEmbeddingProvider(),
-        window.api.hasSecret("cohere_api_key"),
-        window.api.getStorageStats(),
-        window.api.getAutoSync(),
-        window.api.hasSecret("notion_token"),
-        window.api.hasSecret("google_tokens"),
-        window.api.getTelemetryEnabled(),
-      ])
-        .then(([p, keyPresent, s, sync, notion, drive, telemetry]) => {
-          setProvider(p);
-          setHasKey(keyPresent);
-          setStats(s);
-          setAutoSyncEnabled(sync.enabled);
-          setAutoSyncInterval(sync.intervalMs);
-          setLastSyncedAt(sync.lastSyncedAt);
-          setAutoSyncing(sync.syncing);
-          setHasNotion(notion);
-          setHasDrive(drive);
-          setTelemetryEnabled(telemetry);
-          setLoadError(null);
-        })
-        .catch(() => {
-          setLoadError("Failed to load settings.");
-        });
+      refresh();
     }
     prevVisibleRef.current = visible;
-  }, [visible]);
+  }, [visible, refresh]);
+
+  // M11: the auto-sync line was a one-shot snapshot, so a background sync left it
+  // reading "Syncing now…" forever. Refetch the scheduler's live state whenever a
+  // sync makes progress or the source list changes. Only the sync-status fields
+  // are touched — the user-controlled enabled/interval must not be clobbered by a
+  // progress event mid-toggle.
+  useEffect(() => {
+    const refetchSyncState = (): void => {
+      window.api
+        .getAutoSync()
+        .then((sync) => {
+          setLastSyncedAt(sync.lastSyncedAt);
+          setAutoSyncing(sync.syncing);
+        })
+        .catch(() => {});
+    };
+    const unsubProgress = window.api.onSyncProgress(refetchSyncState);
+    const unsubSources = window.api.onSourcesChanged(refetchSyncState);
+    return () => {
+      unsubProgress();
+      unsubSources();
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -120,12 +152,20 @@ export function SettingsPage({
   }
 
   async function handleRemoveKey(): Promise<void> {
-    if (!confirm("Remove your Cohere API key? Search will stop working."))
+    if (
+      !confirm(
+        "Remove your Cohere API key? Search will be disabled until you add a " +
+          "new key. Your synced documents stay on this device.",
+      )
+    )
       return;
     try {
       await window.api.deleteSecret("cohere_api_key");
+      // M12: deliberately NOT onProviderReset() — that flips App to ready=false,
+      // which unmounts everything for the OnboardingWizard and throws away the
+      // user's place in Settings. The "no key" banner below already tells them
+      // search is off; they can add a key without leaving the page.
       setHasKey(false);
-      onProviderReset();
     } catch {
       setKeyError("Failed to remove key.");
     }
@@ -135,9 +175,12 @@ export function SettingsPage({
     newProvider: "cohere" | "ollama",
   ): Promise<void> {
     if (newProvider === provider) return;
+    // A null `stats` means the count fetch failed — we cannot rule out that
+    // there are chunks to invalidate, so prompt anyway. (The old `stats && …`
+    // guard let a failed fetch skip the confirm entirely.)
+    const mayHaveChunks = !stats || stats.chunkCount > 0;
     if (
-      stats &&
-      stats.chunkCount > 0 &&
+      mayHaveChunks &&
       !confirm(
         "Switching providers requires re-embedding all documents. Continue?",
       )
@@ -146,9 +189,11 @@ export function SettingsPage({
     try {
       await window.api.setEmbeddingProvider(newProvider);
       setProvider(newProvider);
-      if (newProvider === "ollama") {
-        onProviderReset();
-      }
+      // H12: re-evaluate readiness in BOTH directions. Switching to a provider
+      // that is not configured (Ollama not installed, or Cohere with no key)
+      // must route the user to set it up, not leave `ready` stale so every
+      // search fails silently at the embedder.
+      onProviderReset();
     } catch {
       setLoadError("Failed to switch provider.");
     }
@@ -231,9 +276,11 @@ export function SettingsPage({
     setClearing(true);
     try {
       await window.api.clearAllData();
-      setHasNotion(false);
-      setHasDrive(false);
-      onProviderReset();
+      // M10: re-read everything so the page reflects the wiped state (zeroed
+      // stats, no key, disconnected providers) instead of insisting the data is
+      // still there. Staying in Settings rather than bouncing to onboarding is
+      // deliberate — same reasoning as removing a key (M12).
+      refresh();
     } catch {
       setLoadError("Failed to clear data.");
     } finally {
@@ -370,7 +417,7 @@ export function SettingsPage({
               </div>
             ) : (
               <ErrorBanner variant="warning">
-                No API key configured. Search will not work.
+                No API key configured — search is disabled until you add one.
               </ErrorBanner>
             )}
             <div className="flex gap-2">

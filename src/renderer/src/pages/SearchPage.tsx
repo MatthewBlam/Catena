@@ -18,23 +18,35 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [rerankFailed, setRerankFailed] = useState(false);
   const [health, setHealth] = useState<EmbeddingHealth | null>(null);
-  const [healthDismissed, setHealthDismissed] = useState(false);
+  const [dismissedSignature, setDismissedSignature] = useState<string | null>(
+    null,
+  );
   const queryRef = useRef(query);
-  const healthLoaded = useRef(false);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
     queryRef.current = query;
   }, [query]);
 
-  useEffect(() => {
-    if (!visible || healthLoaded.current) return;
-    healthLoaded.current = true;
+  const refreshHealth = useCallback(() => {
     window.api
       .checkEmbeddingHealth()
       .then(setHealth)
       .catch(() => {});
-  }, [visible]);
+  }, []);
+
+  // H11: re-check every time the page becomes visible — which is exactly when
+  // the user returns from switching providers in Settings — rather than once per
+  // session. The old once-gate meant the mismatch warning never fired for the
+  // flow that *creates* the mismatch.
+  useEffect(() => {
+    if (visible) refreshHealth();
+  }, [visible, refreshHealth]);
+
+  // And after any sync completes: a re-embed can clear a mismatch (or create one).
+  useEffect(() => {
+    return window.api.onSourcesChanged(refreshHealth);
+  }, [refreshHealth]);
 
   // Unmounting leaves any in-flight search with no consumer — but it is still
   // holding a SQLite iterator open on the main thread. (App swaps this page out
@@ -84,11 +96,15 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     [handleSearch],
   );
 
+  // Key the dismissal to *which* mismatch was dismissed, not a bare boolean, so
+  // a fresh mismatch (new model, different count — e.g. right after a provider
+  // switch) resurfaces the banner instead of staying hidden by an earlier dismiss.
+  const healthSignature =
+    health && health.mismatchedChunks > 0 && health.totalChunks > 0
+      ? `${health.model}:${health.mismatchedChunks}`
+      : null;
   const hasMismatch =
-    health &&
-    health.mismatchedChunks > 0 &&
-    health.totalChunks > 0 &&
-    !healthDismissed;
+    healthSignature !== null && healthSignature !== dismissedSignature;
 
   return (
     <div className="min-h-full flex flex-col pt-3 pb-8">
@@ -110,7 +126,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
         {hasMismatch && (
           <ErrorBanner
             variant="warning"
-            onDismiss={() => setHealthDismissed(true)}
+            onDismiss={() => setDismissedSignature(healthSignature)}
           >
             Some documents were embedded with a different model. Results may be
             less accurate. Re-sync your sources from the Sources tab to fix.

@@ -7,6 +7,7 @@ import { SettingsPage } from "@renderer/pages/SettingsPage";
 import { ErrorBoundary } from "@renderer/components/ui/ErrorBoundary";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { cn } from "@renderer/lib/utils";
+import { getOllamaStatus } from "@renderer/lib/ollama";
 
 function DragRegion({ className }: { className?: string }): React.JSX.Element {
   const rafRef = useRef(0);
@@ -73,7 +74,13 @@ function App(): React.JSX.Element {
       .getEmbeddingProvider()
       .then(async (provider) => {
         if (provider === "ollama") {
-          setReady(true);
+          // Ollama being the *chosen* provider does not mean it is installed and
+          // running. Without this check a user could configure Ollama, quit
+          // before installing it, relaunch straight past onboarding, and hit raw
+          // fetch errors on every search.
+          const { available } = await getOllamaStatus();
+          setReady(available);
+          if (!available) setVisited(new Set(["search"]));
           return;
         }
         // hasSecret, not loadSecret: all we need is whether a key exists, and

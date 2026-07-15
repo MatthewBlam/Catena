@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { getOllamaStatus, isEmbeddingModel } from "@renderer/lib/ollama";
 
 interface OllamaOptionProps {
   onSuccess: () => void;
@@ -19,7 +20,7 @@ export function OllamaOption({
     setStatus("checking");
     setError(null);
     try {
-      const result = await window.api.checkOllama();
+      const result = await getOllamaStatus();
       if (result.available) {
         setStatus("available");
         setModels(result.models);
@@ -35,7 +36,7 @@ export function OllamaOption({
     let ignore = false;
     (async () => {
       try {
-        const result = await window.api.checkOllama();
+        const result = await getOllamaStatus();
         if (ignore) return;
         if (result.available) {
           setStatus("available");
@@ -93,9 +94,7 @@ export function OllamaOption({
     );
   }
 
-  const embeddingModels = models.filter(
-    (m) => m.includes("embed") || m.includes("nomic") || m.includes("mxbai"),
-  );
+  const embeddingModels = models.filter(isEmbeddingModel);
 
   return (
     <div className="space-y-3">
