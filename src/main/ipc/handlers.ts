@@ -402,4 +402,17 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("settings:set-telemetry-enabled", (_, enabled: boolean) => {
     setTelemetryEnabled(getDb(), enabled);
   });
+
+  // Onboarding writes the provider secret the moment a key validates, so
+  // presence of a key can't distinguish "finished the wizard" from "quit
+  // halfway." This explicit flag is the gate App uses. Cleared on clearAllData
+  // (it isn't in PRESERVED_SETTING_KEYS) — but a wipe also drops the secret, so
+  // the wizard reappears on the next launch either way.
+  ipcMain.handle("settings:get-onboarding-complete", () => {
+    return getSetting(getDb(), "onboarding_complete") === "true";
+  });
+
+  ipcMain.handle("settings:set-onboarding-complete", () => {
+    upsertSetting(getDb(), "onboarding_complete", "true");
+  });
 }

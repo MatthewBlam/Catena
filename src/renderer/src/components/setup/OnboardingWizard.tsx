@@ -52,6 +52,18 @@ export function OnboardingWizard({
     loadSources();
   }
 
+  async function handleFinish(): Promise<void> {
+    // Persist before handing control back so a relaunch doesn't drop the user
+    // back into the wizard. Non-fatal on failure: worst case the wizard
+    // reappears next launch, which is strictly better than blocking entry.
+    try {
+      await window.api.setOnboardingComplete();
+    } catch {
+      // ignore — see above
+    }
+    onComplete();
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-8">
       <div className="w-full max-w-md space-y-6">
@@ -216,7 +228,7 @@ export function OnboardingWizard({
                   : "You can connect sources later from the Sources tab."}
               </p>
             </div>
-            <Button onClick={onComplete} className="w-full">
+            <Button onClick={() => void handleFinish()} className="w-full">
               Start searching
             </Button>
           </div>

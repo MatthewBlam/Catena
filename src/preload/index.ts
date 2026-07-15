@@ -97,6 +97,10 @@ const api = {
     ipcRenderer.invoke("settings:get-telemetry-enabled"),
   setTelemetryEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke("settings:set-telemetry-enabled", enabled),
+  getOnboardingComplete: (): Promise<boolean> =>
+    ipcRenderer.invoke("settings:get-onboarding-complete"),
+  setOnboardingComplete: (): Promise<void> =>
+    ipcRenderer.invoke("settings:set-onboarding-complete"),
 };
 
 contextBridge.exposeInMainWorld("api", api);

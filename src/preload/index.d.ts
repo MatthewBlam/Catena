@@ -51,6 +51,10 @@ interface CommonsAPI {
   setAutoSyncInterval(ms: number): Promise<void>;
   getTelemetryEnabled(): Promise<boolean>;
   setTelemetryEnabled(enabled: boolean): Promise<void>;
+  /** Whether the user has finished the onboarding wizard at least once. */
+  getOnboardingComplete(): Promise<boolean>;
+  /** Marks onboarding finished. Write-once; there is no un-complete. */
+  setOnboardingComplete(): Promise<void>;
 }
 
 interface ElectronDrag {

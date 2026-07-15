@@ -21,6 +21,13 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   const [dismissedSignature, setDismissedSignature] = useState<string | null>(
     null,
   );
+  const [truncated, setTruncated] = useState<{
+    scanned: number;
+    total: number;
+  } | null>(null);
+  // null = not yet loaded (show the suggested-questions empty state, not the
+  // "connect a source" one — otherwise it flashes on every mount).
+  const [sourceCount, setSourceCount] = useState<number | null>(null);
   const queryRef = useRef(query);
   const requestIdRef = useRef(0);
 
@@ -35,18 +42,33 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
       .catch(() => {});
   }, []);
 
+  const refreshSources = useCallback(() => {
+    window.api
+      .listSources()
+      .then((sources) => setSourceCount(sources.length))
+      .catch(() => {});
+  }, []);
+
   // H11: re-check every time the page becomes visible — which is exactly when
   // the user returns from switching providers in Settings — rather than once per
   // session. The old once-gate meant the mismatch warning never fired for the
-  // flow that *creates* the mismatch.
+  // flow that *creates* the mismatch. Source count is refreshed alongside so the
+  // "connect a source" empty state clears the moment the user adds one.
   useEffect(() => {
-    if (visible) refreshHealth();
-  }, [visible, refreshHealth]);
+    if (visible) {
+      refreshHealth();
+      refreshSources();
+    }
+  }, [visible, refreshHealth, refreshSources]);
 
-  // And after any sync completes: a re-embed can clear a mismatch (or create one).
+  // And after any sync/source change: a re-embed can clear a mismatch (or create
+  // one), and adding/removing sources changes the empty-state.
   useEffect(() => {
-    return window.api.onSourcesChanged(refreshHealth);
-  }, [refreshHealth]);
+    return window.api.onSourcesChanged(() => {
+      refreshHealth();
+      refreshSources();
+    });
+  }, [refreshHealth, refreshSources]);
 
   // Unmounting leaves any in-flight search with no consumer — but it is still
   // holding a SQLite iterator open on the main thread. (App swaps this page out
@@ -66,6 +88,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     setLoading(true);
     setError(null);
     setRerankFailed(false);
+    setTruncated(null);
 
     const id = ++requestIdRef.current;
 
@@ -76,6 +99,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
       if (id !== requestIdRef.current || response.cancelled) return;
       setResults(response.results);
       setRerankFailed(response.rerankFailed);
+      setTruncated(response.truncated ?? null);
       setLastRewritten(response.rewrittenQuery ?? null);
     } catch (err) {
       if (id !== requestIdRef.current) return;
@@ -142,6 +166,15 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
           </ErrorBanner>
         )}
 
+        {truncated && (
+          <ErrorBanner variant="warning">
+            Your library is large, so this search covered{" "}
+            {truncated.scanned.toLocaleString()} of{" "}
+            {truncated.total.toLocaleString()} indexed sections. Some matches
+            may be missing — try a more specific query.
+          </ErrorBanner>
+        )}
+
         {error && <ErrorBanner variant="error">{error}</ErrorBanner>}
 
         {loading && (
@@ -179,9 +212,21 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
           </p>
         )}
 
-        {!loading && results === null && !error && (
-          <EmptyState onSelectQuestion={handleSelectQuestion} />
-        )}
+        {!loading &&
+          results === null &&
+          !error &&
+          (sourceCount === 0 ? (
+            <div className="text-center py-12 space-y-1">
+              <p className="text-sm text-foreground">
+                No sources connected yet.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Add a source from the Sources tab to start searching.
+              </p>
+            </div>
+          ) : (
+            <EmptyState onSelectQuestion={handleSelectQuestion} />
+          ))}
       </div>
     </div>
   );

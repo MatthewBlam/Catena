@@ -70,28 +70,31 @@ function App(): React.JSX.Element {
   }, [dark]);
 
   const checkReady = useCallback((): void => {
-    window.api
-      .getEmbeddingProvider()
-      .then(async (provider) => {
-        if (provider === "ollama") {
-          // Ollama being the *chosen* provider does not mean it is installed and
-          // running. Without this check a user could configure Ollama, quit
-          // before installing it, relaunch straight past onboarding, and hit raw
-          // fetch errors on every search.
-          const { available } = await getOllamaStatus();
-          setReady(available);
-          if (!available) setVisited(new Set(["search"]));
-          return;
-        }
-        // hasSecret, not loadSecret: all we need is whether a key exists, and
-        // loadSecret would hand the plaintext key across the context bridge into
-        // renderer memory to answer a yes/no question.
-        const isReady = await window.api.hasSecret("cohere_api_key");
+    Promise.all([
+      window.api.getOnboardingComplete(),
+      window.api.getEmbeddingProvider(),
+    ])
+      .then(async ([onboarded, provider]) => {
+        // A configured provider is necessary but not sufficient: validating a
+        // Cohere key writes the secret immediately, so a user who quit mid-wizard
+        // would otherwise be waved straight onto Search, never seeing "Connect
+        // your docs." Require the explicit completion flag too.
+        //
+        // Ollama being the *chosen* provider likewise does not mean it is
+        // installed and running — check availability rather than trust the
+        // setting, or a configured-but-absent Ollama yields raw fetch errors on
+        // every search. hasSecret (not loadSecret) keeps the plaintext key out
+        // of renderer memory for a yes/no question.
+        const providerReady =
+          provider === "ollama"
+            ? (await getOllamaStatus()).available
+            : await window.api.hasSecret("cohere_api_key");
+        const isReady = onboarded && providerReady;
         setReady(isReady);
         if (!isReady) setVisited(new Set(["search"]));
       })
       .catch((err) => {
-        console.error("Failed to check embedding provider:", err);
+        console.error("Failed to check readiness:", err);
         setReady(false);
         setVisited(new Set(["search"]));
       });
