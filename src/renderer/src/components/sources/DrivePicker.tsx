@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, Fragment } from "react";
+import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import {
   FolderIcon,
   FileTextIcon,
@@ -37,13 +37,22 @@ export function DrivePicker({
     { id: "root", name: "My Drive" },
   ]);
   const [searchQuery, setSearchQuery] = useState("");
-  const cancelRef = useRef(false);
+  // A monotonic request id, not a single boolean: navigating A (slow) then B
+  // (fast) must not let A's late response clobber B's contents while the
+  // breadcrumbs read B — which would add a source under the wrong parent. Only
+  // the newest request writes state. mountedRef additionally suppresses writes
+  // after unmount. (Bump the id *before* the cache check so a synchronous
+  // cache-hit navigation also invalidates any still-pending async fetch.)
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(true);
   const cacheRef = useRef(new Map<string, DriveItemSummary[]>());
 
   async function fetchFolder(
     folderId: string,
     skipCache?: boolean,
   ): Promise<void> {
+    const id = ++requestIdRef.current;
+
     if (!skipCache) {
       const cached = cacheRef.current.get(folderId);
       if (cached) {
@@ -54,36 +63,37 @@ export function DrivePicker({
       }
     }
 
-    cancelRef.current = false;
     setLoading(true);
     setError(null);
     try {
       const result = await window.api.listDriveItems(
         folderId === "root" ? undefined : folderId,
       );
-      if (!cancelRef.current) {
-        cacheRef.current.set(folderId, result);
-        setItems(result);
-      }
+      if (!mountedRef.current || id !== requestIdRef.current) return;
+      cacheRef.current.set(folderId, result);
+      setItems(result);
     } catch (err) {
-      if (!cancelRef.current) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to load Drive items";
-        setError(
-          msg.includes("401") || msg.toLowerCase().includes("unauthorized")
-            ? "Session expired — please reconnect in Settings."
-            : msg,
-        );
-      }
+      if (!mountedRef.current || id !== requestIdRef.current) return;
+      const msg =
+        err instanceof Error ? err.message : "Failed to load Drive items";
+      setError(
+        msg.includes("401") || msg.toLowerCase().includes("unauthorized")
+          ? "Session expired — please reconnect in Settings."
+          : msg,
+      );
     } finally {
-      if (!cancelRef.current) setLoading(false);
+      if (mountedRef.current && id === requestIdRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
+    // Reset on every run, not just declaration: StrictMode mounts, unmounts
+    // (flipping this false), then remounts — without the reset the remounted
+    // instance would treat itself as unmounted and never write.
+    mountedRef.current = true;
     void fetchFolder("root");
     return () => {
-      cancelRef.current = true;
+      mountedRef.current = false;
     };
   }, []);
 
@@ -123,13 +133,17 @@ export function DrivePicker({
     }
   }
 
-  const filtered = searchQuery
-    ? items.filter((i) =>
-        i.name.toLowerCase().includes(searchQuery.toLowerCase()),
-      )
-    : items;
-  const folders = filtered.filter((i) => i.isFolder);
-  const files = filtered.filter((i) => !i.isFolder);
+  const filtered = useMemo(
+    () =>
+      searchQuery
+        ? items.filter((i) =>
+            i.name.toLowerCase().includes(searchQuery.toLowerCase()),
+          )
+        : items,
+    [items, searchQuery],
+  );
+  const folders = useMemo(() => filtered.filter((i) => i.isFolder), [filtered]);
+  const files = useMemo(() => filtered.filter((i) => !i.isFolder), [filtered]);
   const allFoldersSelected =
     folders.length > 0 && folders.every((f) => selected.has(f.id));
 
