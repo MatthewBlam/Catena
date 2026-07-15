@@ -46,7 +46,7 @@ export function ApiKeyForm({ onSuccess }: ApiKeyFormProps): React.JSX.Element {
             if (status === "invalid") setStatus("idle");
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") handleValidate();
+            if (e.key === "Enter") void handleValidate();
           }}
         />
       </div>
@@ -74,7 +74,9 @@ export function ApiKeyForm({ onSuccess }: ApiKeyFormProps): React.JSX.Element {
           type="button"
           className="underline underline-offset-2 hover:text-foreground"
           onClick={() =>
-            window.api.openExternal("https://dashboard.cohere.com/api-keys")
+            void window.api.openExternal(
+              "https://dashboard.cohere.com/api-keys",
+            )
           }
         >
           dashboard.cohere.com

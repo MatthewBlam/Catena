@@ -46,7 +46,7 @@ export const ResultCard = memo(function ResultCard({
           <Button
             variant="ghost"
             size="xs"
-            onClick={() => window.api.openExternal(result.url!)}
+            onClick={() => void window.api.openExternal(result.url!)}
           >
             Open source
             <ExternalLinkIcon />

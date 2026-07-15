@@ -5,10 +5,25 @@ import { Button } from "./button";
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  // When any value in this array changes, a boundary that is currently showing
+  // its error state clears it and re-renders `children`. Pass the identity of
+  // whatever the subtree depends on (e.g. the current page) so navigating away
+  // from a broken screen recovers instead of staying stuck on the fallback.
+  resetKeys?: unknown[];
+  onError?: (error: Error, info: ErrorInfo) => void;
 }
 
 interface State {
   error: Error | null;
+}
+
+function keysChanged(
+  a: unknown[] | undefined,
+  b: unknown[] | undefined,
+): boolean {
+  if (a === b) return false;
+  if (!a || !b || a.length !== b.length) return true;
+  return a.some((val, i) => !Object.is(val, b[i]));
 }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -20,6 +35,15 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("ErrorBoundary caught:", error, info.componentStack);
+    this.props.onError?.(error, info);
+  }
+
+  componentDidUpdate(prev: Props): void {
+    // A deterministic render error would re-throw the instant we cleared it, so
+    // we only auto-reset when the caller signals the underlying inputs changed.
+    if (this.state.error && keysChanged(prev.resetKeys, this.props.resetKeys)) {
+      this.setState({ error: null });
+    }
   }
 
   render(): ReactNode {

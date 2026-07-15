@@ -81,7 +81,7 @@ export function OllamaOption({
           <button
             type="button"
             className="underline underline-offset-2 hover:text-foreground"
-            onClick={() => window.api.openExternal("https://ollama.com")}
+            onClick={() => void window.api.openExternal("https://ollama.com")}
           >
             ollama.com
           </button>

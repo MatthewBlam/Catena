@@ -182,20 +182,20 @@ function App(): React.JSX.Element {
       <div className="flex flex-1 flex-col min-w-0">
         <DragRegion className="h-10 shrink-0" />
         <main className="flex-1 min-h-0 overflow-y-auto pr-3">
-          <ErrorBoundary>
+          <ErrorBoundary resetKeys={[page]}>
             <div style={{ display: page === "search" ? undefined : "none" }}>
               <SearchPage visible={page === "search"} />
             </div>
           </ErrorBoundary>
           {visited.has("sources") && (
-            <ErrorBoundary>
+            <ErrorBoundary resetKeys={[page]}>
               <div style={{ display: page === "sources" ? undefined : "none" }}>
                 <SourcesPage visible={page === "sources"} />
               </div>
             </ErrorBoundary>
           )}
           {visited.has("settings") && (
-            <ErrorBoundary>
+            <ErrorBoundary resetKeys={[page]}>
               <div
                 style={{ display: page === "settings" ? undefined : "none" }}
               >
