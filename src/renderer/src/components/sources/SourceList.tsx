@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Trash2Icon,
   RefreshCwIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
   SearchIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 import { Checkbox } from "@renderer/components/ui/checkbox";
 import { Button } from "@renderer/components/ui/button";
@@ -14,6 +15,7 @@ import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { Spinner } from "@renderer/components/ui/spinner";
 import type { SourceWithCount, Document } from "../../../../shared/types";
 import { providerLabel } from "@renderer/lib/format";
+import { cn } from "@renderer/lib/utils";
 
 interface SourceListProps {
   sources: SourceWithCount[];
@@ -21,12 +23,54 @@ interface SourceListProps {
   onRefresh: () => void;
 }
 
+/** How many sources "Sync all" runs at once, to avoid stampeding the provider. */
+const SYNC_ALL_CONCURRENCY = 2;
+
+/** The one-line summary a non-`ok` last sync leaves on a source row. */
+function syncStatusMessage(source: SourceWithCount): {
+  text: string;
+  tone: "error" | "warning" | "muted";
+} | null {
+  switch (source.lastSyncStatus) {
+    case "error":
+      return {
+        tone: "error",
+        text: source.lastSyncError?.split("\n")[0] ?? "Last sync failed",
+      };
+    case "partial":
+      return {
+        tone: "warning",
+        text:
+          source.lastSyncErrorCount > 0
+            ? `Last sync finished with ${source.lastSyncErrorCount} error${
+                source.lastSyncErrorCount !== 1 ? "s" : ""
+              }`
+            : "Last sync finished with errors",
+      };
+    case "cancelled":
+      return { tone: "muted", text: "Last sync was canceled" };
+    default:
+      return null;
+  }
+}
+
 export function SourceList({
   sources,
   label,
   onRefresh,
 }: SourceListProps): React.JSX.Element {
-  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+  // The set of sources showing a SyncPanel is the union of two truths:
+  //  - `mainActive`: what main reports is syncing right now (the scheduler, or
+  //    another window). Hydrated on mount, on focus, and on `sources:changed`.
+  //    Panels for these observe only — main already owns the sync.
+  //  - `startedLocally`: syncs this list kicked off. `startedLocallyRef` is the
+  //    synchronous mirror the queue reads so a burst of starts sees its own
+  //    additions without waiting for a state flush.
+  const [mainActive, setMainActive] = useState<Set<string>>(new Set());
+  const [startedLocally, setStartedLocally] = useState<Set<string>>(new Set());
+  const startedLocallyRef = useRef<Set<string>>(new Set());
+  const queueRef = useRef<string[]>([]);
+
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -43,7 +87,85 @@ export function SourceList({
     onRefreshRef.current = onRefresh;
   }, [onRefresh]);
 
-  const prevSyncingRef = useRef<Set<string>>(new Set());
+  const syncingIds = useMemo(
+    () => new Set([...startedLocally, ...mainActive]),
+    [startedLocally, mainActive],
+  );
+
+  const commitStartedLocally = useCallback(() => {
+    setStartedLocally(new Set(startedLocallyRef.current));
+  }, []);
+
+  // Pull main's active-sync set. This is authoritative for syncs main owns; a
+  // sync we started locally that main has not registered yet stays visible
+  // because it also lives in `startedLocally`. A failed hydrate is swallowed —
+  // it must not wipe locally-started syncs.
+  const hydrateActive = useCallback(() => {
+    window.api
+      .getActiveSyncs()
+      .then(({ active }) =>
+        setMainActive(new Set(active.map((a) => a.sourceId))),
+      )
+      .catch(() => {});
+  }, []);
+
+  // Start as many queued Sync-all sources as there are free slots. Reads the
+  // ref, not state, so a single pump can fill both slots at once.
+  const pumpQueue = useCallback(() => {
+    const slots = SYNC_ALL_CONCURRENCY - startedLocallyRef.current.size;
+    if (slots <= 0 || queueRef.current.length === 0) return;
+    const toStart = queueRef.current.splice(0, slots);
+    for (const id of toStart) startedLocallyRef.current.add(id);
+    commitStartedLocally();
+  }, [commitStartedLocally]);
+
+  const startLocalSync = useCallback(
+    (id: string) => {
+      if (startedLocallyRef.current.has(id)) return;
+      startedLocallyRef.current.add(id);
+      commitStartedLocally();
+    },
+    [commitStartedLocally],
+  );
+
+  // A sync finished, or its source was removed: forget it everywhere and let a
+  // waiting Sync-all source take the freed slot.
+  const releaseSync = useCallback(
+    (id: string) => {
+      if (startedLocallyRef.current.delete(id)) commitStartedLocally();
+      setMainActive((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      queueRef.current = queueRef.current.filter((q) => q !== id);
+      pumpQueue();
+    },
+    [commitStartedLocally, pumpQueue],
+  );
+
+  useEffect(() => {
+    hydrateActive();
+  }, [hydrateActive]);
+
+  // A window brought to the foreground may have missed syncs that started (or
+  // finished) while it was hidden.
+  useEffect(() => {
+    window.addEventListener("focus", hydrateActive);
+    return () => window.removeEventListener("focus", hydrateActive);
+  }, [hydrateActive]);
+
+  // `sources:changed` is the authoritative "your view is stale" signal: refetch
+  // the list (its per-source status just changed) and re-hydrate the active set
+  // (a sync just started or ended).
+  useEffect(() => {
+    const unsub = window.api.onSourcesChanged(() => {
+      onRefreshRef.current();
+      hydrateActive();
+    });
+    return unsub;
+  }, [hydrateActive]);
 
   const fetchDocs = useCallback(async (sourceId: string): Promise<void> => {
     setLoadingDocIds((prev) => new Set(prev).add(sourceId));
@@ -61,12 +183,16 @@ export function SourceList({
     }
   }, []);
 
+  const prevSyncingRef = useRef<Set<string>>(new Set());
+
+  // When a source stops syncing, its documents changed underneath us. Drop its
+  // stale doc cache and, if it is expanded, refetch. (`sources:changed` already
+  // refreshes the source list; this is only about the per-source doc list.)
   useEffect(() => {
     const justFinished = [...prevSyncingRef.current].filter(
       (id) => !syncingIds.has(id),
     );
     if (justFinished.length > 0) {
-      onRefreshRef.current();
       setDocsCache((prev) => {
         const next = new Map(prev);
         for (const id of justFinished) next.delete(id);
@@ -101,7 +227,8 @@ export function SourceList({
 
   async function handleBulkRemove(): Promise<void> {
     if (selected.size === 0) return;
-    const count = selected.size;
+    const ids = [...selected];
+    const count = ids.length;
     if (
       !confirm(
         `Remove ${count} source${count !== 1 ? "s" : ""}? All synced documents will be deleted.`,
@@ -111,41 +238,46 @@ export function SourceList({
     }
     setBulkRemoving(true);
     setError(null);
-    try {
-      for (const id of selected) {
-        await window.api.removeSource(id);
-      }
-      if (expandedId && selected.has(expandedId)) setExpandedId(null);
-      setDocsCache((prev) => {
-        const next = new Map(prev);
-        for (const id of selected) next.delete(id);
-        return next;
-      });
-      setSelected(new Set());
-    } catch {
-      setError("Failed to remove some sources.");
-    } finally {
-      onRefreshRef.current();
-      setBulkRemoving(false);
+    // allSettled, not a loop that breaks on the first rejection: one failure
+    // must not hide which of the others succeeded, nor strand the whole
+    // selection. Mirrors ConnectNotionButton.handlePickAdd.
+    const results = await Promise.allSettled(
+      ids.map((id) => window.api.removeSource(id)),
+    );
+    const succeeded = ids.filter((_, i) => results[i].status === "fulfilled");
+    const failed = ids.filter((_, i) => results[i].status === "rejected");
+
+    for (const id of succeeded) releaseSync(id);
+    setDocsCache((prev) => {
+      const next = new Map(prev);
+      for (const id of succeeded) next.delete(id);
+      return next;
+    });
+    if (expandedId && succeeded.includes(expandedId)) setExpandedId(null);
+    // Keep the failures selected so a retry is one click away; drop the rest.
+    setSelected(new Set(failed));
+
+    if (failed.length > 0) {
+      const names = failed.map(
+        (id) => sources.find((s) => s.id === id)?.name ?? id,
+      );
+      setError(`Failed to remove: ${names.join(", ")}`);
     }
+    onRefreshRef.current();
+    setBulkRemoving(false);
   }
 
   async function handleRemove(id: string): Promise<void> {
     if (!confirm("Remove this source? All synced documents will be deleted.")) {
       return;
     }
-    if (syncingIds.has(id)) {
-      await window.api.cancelSync(id).catch(() => {});
-      setSyncingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
     setRemoving(id);
     setError(null);
     try {
+      // `sources:remove` in main aborts any in-flight sync and waits for it to
+      // unwind before deleting, so there is nothing to cancel here first.
       await window.api.removeSource(id);
+      releaseSync(id);
       if (expandedId === id) setExpandedId(null);
       setDocsCache((prev) => {
         const next = new Map(prev);
@@ -160,6 +292,26 @@ export function SourceList({
     }
   }
 
+  const filtered = useMemo(
+    () =>
+      searchQuery
+        ? sources.filter((s) =>
+            s.name.toLowerCase().includes(searchQuery.toLowerCase()),
+          )
+        : sources,
+    [sources, searchQuery],
+  );
+
+  function handleSyncAll(): void {
+    const queued = new Set(queueRef.current);
+    for (const s of filtered) {
+      if (!syncingIds.has(s.id) && !queued.has(s.id)) {
+        queueRef.current.push(s.id);
+      }
+    }
+    pumpQueue();
+  }
+
   if (sources.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
@@ -168,12 +320,9 @@ export function SourceList({
     );
   }
 
-  const filtered = searchQuery
-    ? sources.filter((s) =>
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()),
-      )
-    : sources;
   const selecting = selected.size > 0;
+  const allSyncing =
+    filtered.length > 0 && filtered.every((s) => syncingIds.has(s.id));
 
   return (
     <div className="space-y-3">
@@ -219,16 +368,8 @@ export function SourceList({
             <Button
               variant="outline"
               size="xs"
-              onClick={async () => {
-                const notSyncing = filtered
-                  .filter((s) => !syncingIds.has(s.id))
-                  .map((s) => s.id);
-                for (const id of notSyncing) {
-                  setSyncingIds((prev) => new Set(prev).add(id));
-                  await new Promise((r) => setTimeout(r, 500));
-                }
-              }}
-              disabled={filtered.every((s) => syncingIds.has(s.id))}
+              onClick={handleSyncAll}
+              disabled={allSyncing}
             >
               <RefreshCwIcon />
               Sync all
@@ -254,6 +395,7 @@ export function SourceList({
         const isExpanded = expandedId === source.id;
         const isSyncing = syncingIds.has(source.id);
         const hasBottomPanel = isSyncing || isExpanded;
+        const statusMsg = isSyncing ? null : syncStatusMessage(source);
 
         return (
           <div key={source.id}>
@@ -285,6 +427,23 @@ export function SourceList({
                       {source.documentCount} doc
                       {source.documentCount !== 1 ? "s" : ""} synced
                     </p>
+                    {statusMsg && (
+                      <p
+                        className={cn(
+                          "flex items-center gap-1 text-xs mt-0.5",
+                          statusMsg.tone === "error" &&
+                            "text-destructive-foreground",
+                          statusMsg.tone === "warning" &&
+                            "text-warning-foreground",
+                          statusMsg.tone === "muted" && "text-muted-foreground",
+                        )}
+                      >
+                        {statusMsg.tone !== "muted" && (
+                          <AlertTriangleIcon className="size-3 shrink-0" />
+                        )}
+                        <span className="truncate">{statusMsg.text}</span>
+                      </p>
+                    )}
                   </div>
                 </button>
                 {selecting ? (
@@ -297,9 +456,7 @@ export function SourceList({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      onClick={() =>
-                        setSyncingIds((prev) => new Set(prev).add(source.id))
-                      }
+                      onClick={() => startLocalSync(source.id)}
                       disabled={isSyncing}
                       title="Sync"
                     >
@@ -347,7 +504,9 @@ export function SourceList({
                           <Button
                             variant="ghost"
                             size="icon-xs"
-                            onClick={() => window.api.openExternal(doc.url!)}
+                            onClick={() =>
+                              void window.api.openExternal(doc.url!)
+                            }
                             title="Open source"
                           >
                             <ExternalLinkIcon />
@@ -363,13 +522,8 @@ export function SourceList({
               <SyncPanel
                 sourceId={source.id}
                 sourceName={source.name}
-                onComplete={() => {
-                  setSyncingIds((prev) => {
-                    const next = new Set(prev);
-                    next.delete(source.id);
-                    return next;
-                  });
-                }}
+                autoStart={startedLocally.has(source.id)}
+                onComplete={() => releaseSync(source.id)}
               />
             )}
           </div>

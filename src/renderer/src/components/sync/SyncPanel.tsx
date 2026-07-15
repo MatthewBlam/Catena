@@ -7,6 +7,14 @@ interface SyncPanelProps {
   sourceId: string;
   sourceName: string;
   onComplete: () => void;
+  /**
+   * Whether this panel owns the sync. `true` (default): it calls `syncSource`
+   * and self-dismisses when the call settles. `false`: the sync is already
+   * running in main (started by the scheduler or another window), so this panel
+   * only observes progress — starting it again would throw "sync already in
+   * progress". Its parent unmounts it when main reports the sync finished.
+   */
+  autoStart?: boolean;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -28,6 +36,7 @@ export function SyncPanel({
   sourceId,
   sourceName,
   onComplete,
+  autoStart = true,
 }: SyncPanelProps): React.JSX.Element {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [status, setStatus] = useState<
@@ -59,6 +68,8 @@ export function SyncPanel({
   }, [sourceId]);
 
   useEffect(() => {
+    // Observe-only: the sync already runs in main; do not start it again.
+    if (!autoStart) return;
     if (startedRef.current) return;
     startedRef.current = true;
 
@@ -76,7 +87,7 @@ export function SyncPanel({
         setError(err instanceof Error ? err.message : "Sync failed");
         setStatus("error");
       });
-  }, [sourceId]);
+  }, [sourceId, autoStart]);
 
   useEffect(() => {
     if (status !== "syncing") return;
