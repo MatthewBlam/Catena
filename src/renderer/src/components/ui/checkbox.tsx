@@ -36,7 +36,10 @@ export function Checkbox({
       role="checkbox"
       aria-checked={checked}
       onClick={onChange}
-      className={styles}
+      className={cn(
+        styles,
+        "outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24",
+      )}
     >
       {icon}
     </button>

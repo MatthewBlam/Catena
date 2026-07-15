@@ -122,7 +122,10 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
         />
       </div>
 
-      <div className="w-full max-w-3xl mx-auto px-10 flex-1 space-y-3">
+      <div
+        className="w-full max-w-3xl mx-auto px-10 flex-1 space-y-3"
+        aria-live="polite"
+      >
         {hasMismatch && (
           <ErrorBanner
             variant="warning"

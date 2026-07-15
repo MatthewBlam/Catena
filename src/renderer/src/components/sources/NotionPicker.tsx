@@ -172,20 +172,33 @@ export function NotionPicker({
             </p>
           ) : (
             filtered.map((item) => (
+              // H8: a bare <div onClick> with a Checkbox that had no `onChange`
+              // was invisible to the keyboard — the checkbox degraded to a
+              // non-focusable span and nothing else was tabbable, so setup could
+              // not be completed without a mouse. This mirrors DrivePicker: a
+              // real checkbox plus a real button, both operable.
               <div
                 key={item.id}
-                onClick={() => toggleSelect(item)}
-                className="flex items-center gap-2.5 border-b border-input px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer last:border-b-0"
+                className="flex items-center gap-2.5 border-b border-input px-3 py-2 text-sm hover:bg-accent/50 transition-colors last:border-b-0"
               >
-                <Checkbox checked={selected.has(item.id)} />
-                {item.icon ? (
-                  <span className="text-base shrink-0">{item.icon}</span>
-                ) : item.isDatabase ? (
-                  <DatabaseIcon className="size-4 shrink-0 text-muted-foreground" />
-                ) : (
-                  <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
-                )}
-                <span className="truncate">{item.title}</span>
+                <Checkbox
+                  checked={selected.has(item.id)}
+                  onChange={() => toggleSelect(item)}
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleSelect(item)}
+                  className="flex flex-1 items-center gap-2.5 text-left min-w-0 rounded outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24"
+                >
+                  {item.icon ? (
+                    <span className="text-base shrink-0">{item.icon}</span>
+                  ) : item.isDatabase ? (
+                    <DatabaseIcon className="size-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="truncate">{item.title}</span>
+                </button>
               </div>
             ))
           )}

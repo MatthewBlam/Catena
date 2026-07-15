@@ -150,6 +150,7 @@ function App(): React.JSX.Element {
                 key={item.id}
                 type="button"
                 onClick={() => handlePageChange(item.id)}
+                aria-current={page === item.id ? "page" : undefined}
                 className={cn(
                   "w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/24",
                   page === item.id
