@@ -13,6 +13,7 @@ import { Input } from "@renderer/components/ui/input";
 import { SyncPanel } from "@renderer/components/sync/SyncPanel";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { Spinner } from "@renderer/components/ui/spinner";
+import { VirtualList } from "@renderer/components/ui/VirtualList";
 import type { SourceWithCount, Document } from "../../../../shared/types";
 import { providerLabel } from "@renderer/lib/format";
 import { cn } from "@renderer/lib/utils";
@@ -479,43 +480,52 @@ export function SourceList({
             </div>
             {isExpanded && (
               <div className="rounded-b-lg border border-t-0 border-border bg-card px-4 pb-1">
-                {loadingDocIds.has(source.id) && !docsCache.has(source.id) ? (
-                  <div className="flex justify-center py-3">
-                    <Spinner className="size-4 text-muted-foreground" />
-                  </div>
-                ) : (docsCache.get(source.id) ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-3 text-center">
-                    No documents synced
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border">
-                    {(docsCache.get(source.id) ?? []).map((doc) => (
-                      <li
-                        key={doc.id}
-                        className="flex items-center gap-2 py-2 first:pt-1"
-                      >
-                        <span
-                          className={`size-1.5 shrink-0 rounded-full ${doc.syncStatus === "synced" ? "bg-success" : doc.syncStatus === "pending" ? "bg-warning" : "bg-destructive"}`}
-                        />
-                        <span className="text-sm truncate min-w-0 flex-1">
-                          {doc.title}
-                        </span>
-                        {doc.url && (
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() =>
-                              void window.api.openExternal(doc.url!)
-                            }
-                            title="Open source"
-                          >
-                            <ExternalLinkIcon />
-                          </Button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <VirtualList
+                  className="max-h-64 overflow-y-auto"
+                  items={docsCache.get(source.id) ?? []}
+                  getKey={(doc) => doc.id}
+                  estimatedRowHeight={40}
+                  loading={
+                    loadingDocIds.has(source.id) && !docsCache.has(source.id)
+                  }
+                  loadingState={
+                    <div className="flex justify-center py-3">
+                      <Spinner className="size-4 text-muted-foreground" />
+                    </div>
+                  }
+                  emptyState={
+                    <p className="text-xs text-muted-foreground py-3 text-center">
+                      No documents synced
+                    </p>
+                  }
+                  renderItem={(doc, index) => (
+                    // Fixed height (box-border folds the separator into it) so a
+                    // row with an "open" button and a row without stay the same
+                    // height — the virtualizer assumes uniform rows.
+                    <div
+                      className={`flex h-10 items-center gap-2 ${
+                        index > 0 ? "border-t border-border" : ""
+                      }`}
+                    >
+                      <span
+                        className={`size-1.5 shrink-0 rounded-full ${doc.syncStatus === "synced" ? "bg-success" : doc.syncStatus === "pending" ? "bg-warning" : "bg-destructive"}`}
+                      />
+                      <span className="text-sm truncate min-w-0 flex-1">
+                        {doc.title}
+                      </span>
+                      {doc.url && (
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => void window.api.openExternal(doc.url!)}
+                          title="Open source"
+                        >
+                          <ExternalLinkIcon />
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                />
               </div>
             )}
             {isSyncing && (

@@ -10,6 +10,7 @@ import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { VirtualList } from "@renderer/components/ui/VirtualList";
 import type { DriveItemSummary } from "../../../../shared/types";
 
 interface DrivePickerProps {
@@ -144,6 +145,9 @@ export function DrivePicker({
   );
   const folders = useMemo(() => filtered.filter((i) => i.isFolder), [filtered]);
   const files = useMemo(() => filtered.filter((i) => !i.isFolder), [filtered]);
+  // Folders first, then files — one flat list to virtualize, since only its
+  // visible slice is in the DOM. `renderItem` still branches on `isFolder`.
+  const rows = useMemo(() => [...folders, ...files], [folders, files]);
   const allFoldersSelected =
     folders.length > 0 && folders.every((f) => selected.has(f.id));
 
@@ -221,50 +225,55 @@ export function DrivePicker({
           </div>
         )}
 
-        <div className="max-h-64 overflow-y-auto rounded-lg border border-input">
-          {loading ? (
+        <VirtualList
+          className="max-h-64 overflow-y-auto rounded-lg border border-input"
+          items={rows}
+          getKey={(item) => item.id}
+          loading={loading}
+          loadingState={
             <div className="flex items-center justify-center py-8">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
-          ) : filtered.length === 0 ? (
+          }
+          emptyState={
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
               {searchQuery ? "No results found" : "This folder is empty."}
             </p>
-          ) : (
-            <>
-              {folders.map((folder) => (
-                <div
-                  key={folder.id}
-                  className="flex items-center gap-2.5 border-b border-input px-3 py-2 text-sm hover:bg-accent/50 transition-colors last:border-b-0"
+          }
+          renderItem={(item, index) => {
+            // Row border is per-item now (dropped on the last) since virtualized
+            // rows are not DOM siblings for `last:border-b-0` to reach.
+            const border =
+              index < rows.length - 1 ? "border-b border-input" : "";
+            return item.isFolder ? (
+              <div
+                className={`flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-accent/50 transition-colors ${border}`}
+              >
+                <Checkbox
+                  checked={selected.has(item.id)}
+                  onChange={() => toggleSelect(item)}
+                />
+                <button
+                  type="button"
+                  onClick={() => navigateInto(item)}
+                  className="flex flex-1 items-center gap-2 text-left min-w-0"
                 >
-                  <Checkbox
-                    checked={selected.has(folder.id)}
-                    onChange={() => toggleSelect(folder)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => navigateInto(folder)}
-                    className="flex flex-1 items-center gap-2 text-left min-w-0"
-                  >
-                    <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{folder.name}</span>
-                    <ChevronRightIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
-                  </button>
-                </div>
-              ))}
-              {files.map((file) => (
-                <div
-                  key={file.id}
-                  className="flex items-center gap-2 border-b border-input px-3 py-2 text-sm text-muted-foreground last:border-b-0"
-                >
-                  <div className="size-4 shrink-0" />
-                  <FileTextIcon className="size-4 shrink-0" />
-                  <span className="truncate">{file.name}</span>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
+                  <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{item.name}</span>
+                  <ChevronRightIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              </div>
+            ) : (
+              <div
+                className={`flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground ${border}`}
+              >
+                <div className="size-4 shrink-0" />
+                <FileTextIcon className="size-4 shrink-0" />
+                <span className="truncate">{item.name}</span>
+              </div>
+            );
+          }}
+        />
       </div>
 
       <div className="-ml-1 -mt-1.5 flex items-center gap-0.5 text-xs text-muted-foreground overflow-x-auto">

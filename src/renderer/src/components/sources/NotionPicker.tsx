@@ -5,6 +5,7 @@ import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { VirtualList } from "@renderer/components/ui/VirtualList";
 import type { NotionItemSummary } from "../../../../shared/types";
 
 interface NotionPickerProps {
@@ -161,48 +162,55 @@ export function NotionPicker({
           </div>
         )}
 
-        <div className="max-h-64 overflow-y-auto rounded-lg border border-input">
-          {loading ? (
+        <VirtualList
+          className="max-h-64 overflow-y-auto rounded-lg border border-input"
+          items={filtered}
+          getKey={(item) => item.id}
+          loading={loading}
+          loadingState={
             <div className="flex items-center justify-center py-8">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
-          ) : filtered.length === 0 ? (
+          }
+          emptyState={
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
               {searchQuery ? "No results found" : "No pages found"}
             </p>
-          ) : (
-            filtered.map((item) => (
-              // H8: a bare <div onClick> with a Checkbox that had no `onChange`
-              // was invisible to the keyboard — the checkbox degraded to a
-              // non-focusable span and nothing else was tabbable, so setup could
-              // not be completed without a mouse. This mirrors DrivePicker: a
-              // real checkbox plus a real button, both operable.
-              <div
-                key={item.id}
-                className="flex items-center gap-2.5 border-b border-input px-3 py-2 text-sm hover:bg-accent/50 transition-colors last:border-b-0"
+          }
+          renderItem={(item, index) => (
+            // H8: a bare <div onClick> with a Checkbox that had no `onChange`
+            // was invisible to the keyboard — the checkbox degraded to a
+            // non-focusable span and nothing else was tabbable, so setup could
+            // not be completed without a mouse. This mirrors DrivePicker: a
+            // real checkbox plus a real button, both operable. (The row border
+            // is per-item now, dropped on the last, since virtualized rows are
+            // not DOM siblings for `last:` to reach.)
+            <div
+              className={`flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-accent/50 transition-colors ${
+                index < filtered.length - 1 ? "border-b border-input" : ""
+              }`}
+            >
+              <Checkbox
+                checked={selected.has(item.id)}
+                onChange={() => toggleSelect(item)}
+              />
+              <button
+                type="button"
+                onClick={() => toggleSelect(item)}
+                className="flex flex-1 items-center gap-2.5 text-left min-w-0 rounded outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24"
               >
-                <Checkbox
-                  checked={selected.has(item.id)}
-                  onChange={() => toggleSelect(item)}
-                />
-                <button
-                  type="button"
-                  onClick={() => toggleSelect(item)}
-                  className="flex flex-1 items-center gap-2.5 text-left min-w-0 rounded outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24"
-                >
-                  {item.icon ? (
-                    <span className="text-base shrink-0">{item.icon}</span>
-                  ) : item.isDatabase ? (
-                    <DatabaseIcon className="size-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="truncate">{item.title}</span>
-                </button>
-              </div>
-            ))
+                {item.icon ? (
+                  <span className="text-base shrink-0">{item.icon}</span>
+                ) : item.isDatabase ? (
+                  <DatabaseIcon className="size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
+                )}
+                <span className="truncate">{item.title}</span>
+              </button>
+            </div>
           )}
-        </div>
+        />
       </div>
 
       <div className="flex gap-2 justify-end">

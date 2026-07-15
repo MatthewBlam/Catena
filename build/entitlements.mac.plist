@@ -2,11 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
+    <!--
+      Trimmed per audit Task 7.2. `allow-dyld-environment-variables` was
+      removed: it lets DYLD_* env vars alter library loading, and better-sqlite3
+      does not need it. `allow-jit` + `allow-unsigned-executable-memory` are kept
+      for V8, and `disable-library-validation` for loading the unsigned
+      better-sqlite3 native module. If a signed/notarized build still loads
+      cleanly, those two are the next candidates to test-remove.
+    -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>

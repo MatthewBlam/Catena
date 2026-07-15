@@ -1,10 +1,28 @@
 import { resolve } from "path";
 import { defineConfig } from "electron-vite";
+import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { config as dotenvConfig } from "dotenv";
 
 dotenvConfig();
+
+/**
+ * The shipped CSP sets `connect-src 'none'` — accurate, because the renderer
+ * makes no network calls (everything is IPC). But Vite's dev server needs a
+ * websocket back to the renderer for HMR, which 'none' would block. Relax
+ * connect-src for the dev server only (`apply: "serve"`); the built HTML that
+ * actually ships is untouched and keeps 'none'.
+ */
+function devRelaxCsp(): Plugin {
+  return {
+    name: "commons-dev-relax-csp",
+    apply: "serve",
+    transformIndexHtml(html) {
+      return html.replace("connect-src 'none'", "connect-src 'self' ws: wss:");
+    },
+  };
+}
 
 export default defineConfig({
   main: {
@@ -65,6 +83,6 @@ export default defineConfig({
         "@renderer": resolve("src/renderer/src"),
       },
     },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), devRelaxCsp()],
   },
 });
