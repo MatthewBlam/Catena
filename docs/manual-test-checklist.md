@@ -264,7 +264,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 ### Dev Workflow
 
 - [ ] `pnpm dev` launches the app without errors
-- [ ] `pnpm test` runs all tests (expect 118 passing)
+- [ ] `pnpm test` runs all tests (expect 263 passing)
 - [ ] `pnpm test` followed by `pnpm dev` works without ABI crash (posttest hook rebuilds for Electron)
 
 ### Production Build
@@ -280,3 +280,40 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 - [ ] Clearing all data also clears the `secrets` table
 - [ ] Schema migrations run on first launch (3 migration versions)
 - [ ] Duplicate sources are prevented by unique index on `(provider, root_external_id)`
+
+---
+
+## 12. Phase 7 -- Hardening (audit remediation)
+
+These cover behavior that has no automated coverage and needs a running app;
+several (virtualization especially) could not be verified without a display.
+
+### Navigation guard & external links (M17)
+
+- [ ] Every external link (result "Open source", "Get an API key", Ollama link) opens in the OS browser and never navigates the Electron window
+- [ ] The app window never replaces its own page (no blank/white screen from a stray navigation)
+
+### CSP (`connect-src 'none'`)
+
+- [ ] `pnpm dev`: HMR still works -- edit a renderer file and the app hot-updates without a manual reload (dev-only CSP relaxation)
+- [ ] Production build launches with no CSP-violation errors in the console; search, sync, and OAuth all still work (all network lives in main, so `'none'` must not break anything)
+
+### Virtualized lists (M20) -- use a large data set
+
+- [ ] Notion picker with hundreds/thousands of pages: smooth scroll, rows correctly spaced (no overlap or gaps), filter narrows, "Select all" selects the filtered set, and selection persists while scrolling
+- [ ] Drive picker with a large folder: folders then files in order; navigating into a folder and back works; breadcrumbs correct
+- [ ] A source's expanded document list with many docs: scrolls within a bounded panel; rows with and without an "open" button are the same height (no misalignment); the "open" button still works
+- [ ] Keyboard: visible rows' checkboxes/buttons remain focusable and operable (H8 preserved)
+
+### CJK / RTL chunking (7.3)
+
+- [ ] Sync a source with a Chinese/Japanese (or Arabic/Hebrew) document: it produces multiple chunks (storage-stats chunk count exceeds doc count) and is searchable -- it does not collapse into one giant chunk
+
+### Clean shutdown, crash reporting, OAuth timer (7.1)
+
+- [ ] Quit mid-sync: the app exits cleanly (no multi-second hang) and buffered telemetry flushes (if PostHog is configured)
+- [ ] A fatal init error shows an error dialog rather than silently quitting; an uncaught main-process error leaves a console/log diagnostic instead of a silent death
+
+### Entitlements (7.2) -- needs a signed build
+
+- [ ] `pnpm make:mac` produces an app that launches and loads/rebuilds better-sqlite3 under the trimmed hardened-runtime entitlements (the removed `allow-dyld-environment-variables` was not needed)
