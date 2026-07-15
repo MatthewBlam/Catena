@@ -83,6 +83,12 @@ export const migrations: Migration[] = [
   {
     version: 5,
     statements: [
+      // Note (audit Task 7.3): `unicode61` splits on Unicode word boundaries,
+      // which do not exist between CJK characters — so keyword (FTS) search does
+      // not segment CJK/Japanese/Korean text into terms. Vector search still
+      // works there (the chunker now produces bounded CJK chunks), but improving
+      // FTS for CJK would need a dedicated tokenizer (e.g. ICU) and is out of
+      // scope here.
       `CREATE VIRTUAL TABLE chunks_fts USING fts5(
         text,
         heading,

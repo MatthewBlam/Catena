@@ -9,9 +9,30 @@ const MAX_TOKENS = 400;
 const OVERLAP_TOKENS = 50;
 const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 
+// Codepoints from scripts written without spaces between words — CJK ideographs
+// and kana, plus the CJK/fullwidth punctuation blocks. The whitespace word
+// heuristic below reads a spaceless run as a single "word" and so under-counts
+// these by orders of magnitude; each such codepoint is priced at ~1 token.
+const CJK_CHAR =
+  /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/g;
+
 export function estimateTokens(text: string): number {
-  const words = text.split(/\s+/).filter(Boolean);
-  return Math.ceil(words.length / 0.75);
+  const cjkChars = (text.match(CJK_CHAR) ?? []).length;
+  // Strip the CJK codepoints before the whitespace heuristic so a mixed
+  // "Latin 中文" string counts both halves, then add the CJK codepoints back at
+  // ~1 token each. Pure-Latin text is unchanged — there is nothing to strip.
+  const words = text.replace(CJK_CHAR, " ").split(/\s+/).filter(Boolean).length;
+  return Math.ceil(words / 0.75) + cjkChars;
+}
+
+/** Slice a spaceless run into codepoint groups each ≈ maxTokens tokens. */
+function sliceByTokens(text: string, maxTokens: number): string[] {
+  const chars = Array.from(text); // codepoint-aware (handles surrogate pairs)
+  const pieces: string[] = [];
+  for (let i = 0; i < chars.length; i += maxTokens) {
+    pieces.push(chars.slice(i, i + maxTokens).join(""));
+  }
+  return pieces;
 }
 
 function splitOnHeadings(
@@ -56,7 +77,29 @@ function splitOnParagraphs(
 }
 
 function splitAtSentences(text: string): string[] {
-  return text.split(/(?<=[.!?])\s+(?=[A-ZÀ-ɏ"])/).filter(Boolean);
+  // Intl.Segmenter knows sentence boundaries for every script — including CJK
+  // terminators (。！？) and RTL punctuation the Latin-only regex below cannot
+  // see. Without it, CJK/Arabic/Hebrew never split into sentences and fell
+  // through to whitespace word-splitting, which CJK has none of — producing one
+  // enormous chunk per document.
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    try {
+      const segmenter = new Intl.Segmenter(undefined, {
+        granularity: "sentence",
+      });
+      const parts: string[] = [];
+      for (const { segment } of segmenter.segment(text)) {
+        const trimmed = segment.trim();
+        if (trimmed) parts.push(trimmed);
+      }
+      if (parts.length > 0) return parts;
+    } catch {
+      // fall through to the regex
+    }
+  }
+  // Latin-only fallback (Segmenter should always be present in Node/Electron);
+  // CJK terminators added so it at least splits some CJK when it is not.
+  return text.split(/(?<=[.!?。！？])\s+(?=[A-ZÀ-ɏ"])/).filter(Boolean);
 }
 
 function splitOversizedSection(
@@ -90,6 +133,38 @@ function splitOversizedSection(
       let wordTokens = 0;
       for (const word of words) {
         const wt = estimateTokens(word);
+
+        // A single "word" over the limit is a spaceless run (typically CJK)
+        // with no whitespace boundary to pack against — the old code emitted it
+        // as one over-limit chunk. Slice it by codepoints instead, keeping the
+        // remainder in the buffer so the following words can still pack onto it.
+        if (wt > MAX_TOKENS) {
+          if (wordBuf.length > 0) {
+            const chunkText = wordBuf.join(" ");
+            chunks.push({
+              index: idx++,
+              heading,
+              text: chunkText,
+              tokenCount: estimateTokens(chunkText),
+            });
+            wordBuf = [];
+            wordTokens = 0;
+          }
+          const pieces = sliceByTokens(word, MAX_TOKENS);
+          for (let i = 0; i < pieces.length - 1; i++) {
+            chunks.push({
+              index: idx++,
+              heading,
+              text: pieces[i],
+              tokenCount: estimateTokens(pieces[i]),
+            });
+          }
+          const tail = pieces[pieces.length - 1];
+          wordBuf.push(tail);
+          wordTokens += estimateTokens(tail);
+          continue;
+        }
+
         if (wordTokens + wt > MAX_TOKENS && wordBuf.length > 0) {
           const chunkText = wordBuf.join(" ");
           chunks.push({

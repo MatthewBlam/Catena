@@ -10,6 +10,13 @@ describe("estimateTokens", () => {
   it("returns 0 for empty string", () => {
     expect(estimateTokens("")).toBe(0);
   });
+
+  it("counts spaceless CJK by codepoint, not by whitespace", () => {
+    // Whitespace splitting sees "你好世界" as one word (≈2 tokens); codepoint
+    // counting prices it at ~1 token each — the fix that lets oversized CJK
+    // sections be detected and split at all.
+    expect(estimateTokens("你好世界")).toBe(4);
+  });
 });
 
 describe("chunkText", () => {
@@ -124,5 +131,30 @@ describe("chunkText", () => {
     expect(chunks).toHaveLength(1);
     expect(chunks[0].heading).toBeNull();
     expect(chunks[0].text).toBe(text);
+  });
+
+  it("chunks a large CJK document into bounded pieces", () => {
+    // 250 sentences × 20 characters = 5,000 characters, no ASCII whitespace.
+    // Before the fix this produced a single ~5,000-token chunk; sentence
+    // segmentation (。) plus codepoint token counting must now bound each chunk.
+    const sentence = "这是一个用来测试分块逻辑的中文示例句子。";
+    const doc = sentence.repeat(250);
+    const chunks = chunkText(doc, "中文文档");
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.tokenCount).toBeLessThanOrEqual(400); // MAX_TOKENS
+    }
+  });
+
+  it("slices a terminator-less CJK run by codepoints", () => {
+    // A 2,000-character run with no sentence terminator cannot be split by
+    // segmentation or whitespace; the codepoint-slicing fallback must still keep
+    // every chunk within the limit.
+    const doc = "字".repeat(2000);
+    const chunks = chunkText(doc, "无标点");
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.tokenCount).toBeLessThanOrEqual(400); // MAX_TOKENS
+    }
   });
 });
