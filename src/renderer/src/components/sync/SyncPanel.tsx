@@ -14,6 +14,7 @@ const PHASE_LABELS: Record<string, string> = {
   chunking: "Chunking text",
   embedding: "Generating embeddings",
   storing: "Storing data",
+  reconciling: "Checking for deletions",
 };
 
 function formatElapsed(seconds: number): string {
@@ -35,31 +36,46 @@ export function SyncPanel({
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const startedRef = useRef(false);
-  const unsubRef = useRef<(() => void) | null>(null);
+  // Mirrors `status` so the async sync callbacks can read the *current* value
+  // without a stale closure. The only thing that moves status off "syncing"
+  // before the sync settles is the user hitting Cancel.
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  // M16: the sync is started exactly once (guarded), but the progress
+  // subscription lives in its own *unguarded* effect. Folding both into one
+  // guarded effect meant that under StrictMode the first mount subscribed, the
+  // cleanup unsubscribed, and the guarded re-run early-returned before
+  // re-subscribing — so in dev no progress listener existed at all.
+  useEffect(() => {
+    const unsub = window.api.onSyncProgress((p) => {
+      if (p.sourceId === sourceId) {
+        setProgress(p);
+      }
+    });
+    return unsub;
+  }, [sourceId]);
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    unsubRef.current = window.api.onSyncProgress((p) => {
-      if (p.sourceId === sourceId) {
-        setProgress(p);
-      }
-    });
-
     window.api
       .syncSource(sourceId)
       .then(() => {
-        setStatus((prev) => (prev === "syncing" ? "complete" : prev));
+        if (statusRef.current === "syncing") setStatus("complete");
       })
       .catch((err) => {
+        // M8: guard the same way the success path does. A Cancel transitions to
+        // "canceled" and then the sync rejects with an abort error — writing
+        // "error" unconditionally would flash "Sync canceled" then an abort
+        // failure over it.
+        if (statusRef.current !== "syncing") return;
         setError(err instanceof Error ? err.message : "Sync failed");
         setStatus("error");
       });
-
-    return () => {
-      unsubRef.current?.();
-    };
   }, [sourceId]);
 
   useEffect(() => {
@@ -69,13 +85,16 @@ export function SyncPanel({
   }, [status]);
 
   useEffect(() => {
-    if (status === "syncing") return;
+    // H3: only a clean completion self-dismisses. An "error" or "canceled" panel
+    // stays put so its reason remains on screen until the user acts.
+    if (status !== "complete") return;
     const timer = setTimeout(onComplete, 1500);
     return () => clearTimeout(timer);
   }, [status, onComplete]);
 
   function handleCancel(): void {
     window.api.cancelSync(sourceId).catch(() => {});
+    statusRef.current = "canceled";
     setStatus("canceled");
   }
 
@@ -88,7 +107,9 @@ export function SyncPanel({
       ? "Sync complete"
       : status === "canceled"
         ? "Sync canceled"
-        : `Syncing ${sourceName}`;
+        : status === "error"
+          ? `Sync failed for ${sourceName}`
+          : `Syncing ${sourceName}`;
 
   return (
     <div className="border-x border-b border-border rounded-b-lg bg-card/50 px-4 py-3 space-y-3">
@@ -143,9 +164,15 @@ export function SyncPanel({
       )}
 
       {status !== "syncing" && (
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground space-y-0.5">
           {status === "complete" && progress && progress.skipped > 0 && (
             <p>{progress.skipped} unchanged, skipped</p>
+          )}
+          {status === "complete" && progress && progress.deleted > 0 && (
+            <p>
+              {progress.deleted} document{progress.deleted !== 1 ? "s" : ""}{" "}
+              removed
+            </p>
           )}
           <p>{status === "complete" ? "Dismissing…" : "Done"}</p>
         </div>
