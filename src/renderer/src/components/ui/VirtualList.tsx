@@ -55,7 +55,16 @@ export function VirtualList<T>({
     const el = scrollRef.current;
     if (!el) return;
     const measure = (): void => {
-      setScrollTop(el.scrollTop);
+      const newTop = el.scrollTop;
+      // Bail out of the state update (and the re-render it would trigger)
+      // when the new offset still maps to the same windowed row as before —
+      // sub-row scroll deltas don't change `start`/`end`, so most scroll
+      // events are otherwise pure render churn.
+      setScrollTop((prev) =>
+        Math.floor(newTop / rowHeight) === Math.floor(prev / rowHeight)
+          ? prev
+          : newTop,
+      );
       setViewport(el.clientHeight);
     };
     measure();
@@ -71,7 +80,9 @@ export function VirtualList<T>({
       el.removeEventListener("scroll", measure);
       observer?.disconnect();
     };
-  }, []);
+    // `rowHeight` only changes once, when the first row is measured (see
+    // `measureRow` below) — this re-subscribes at most once, not a loop.
+  }, [rowHeight]);
 
   // All rows share a height; measure one real row exactly once and lock it in.
   // A callback ref (not an effect) fires when the first row mounts — including
@@ -97,7 +108,20 @@ export function VirtualList<T>({
 
   const total = items.length;
   const visibleCount = Math.max(1, Math.ceil(viewport / rowHeight));
-  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  // Clamp the offset used to derive the window to the scrollable range for
+  // the *current* item count, not whatever `scrollTop` last reported. Filter
+  // typing or a cache-hit folder nav can shrink `items` in the same tick
+  // that a deep scroll position is still latched in state — without this,
+  // `start` derived from the stale offset can exceed `total`, `slice` comes
+  // back empty, and the viewport goes blank until a later scroll event
+  // happens to correct `scrollTop`. Recomputed every render (pure
+  // derivation), so it's correct immediately, not just after a scroll.
+  const maxScrollTop = Math.max(0, total * rowHeight - viewport);
+  const clampedScrollTop = Math.min(scrollTop, maxScrollTop);
+  const start = Math.max(
+    0,
+    Math.floor(clampedScrollTop / rowHeight) - overscan,
+  );
   const end = Math.min(total, start + visibleCount + overscan * 2);
 
   let body: React.ReactNode;
