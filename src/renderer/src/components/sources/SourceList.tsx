@@ -60,16 +60,31 @@ export function SourceList({
   label,
   onRefresh,
 }: SourceListProps): React.JSX.Element {
-  // The set of sources showing a SyncPanel is the union of two truths:
+  // Sync activity vs. panel visibility are tracked separately (F1/F9): a
+  // failed/canceled sync must free its queue slot immediately, but its panel
+  // should stay on screen until the user dismisses it.
   //  - `mainActive`: what main reports is syncing right now (the scheduler, or
   //    another window). Hydrated on mount, on focus, and on `sources:changed`.
-  //    Panels for these observe only — main already owns the sync.
-  //  - `startedLocally`: syncs this list kicked off. `startedLocallyRef` is the
-  //    synchronous mirror the queue reads so a burst of starts sees its own
-  //    additions without waiting for a state flush.
+  //    Panels for these observe only — main already owns the sync, and its
+  //    panel unmounts the moment main reports it gone from this set.
+  //  - `startedLocally`: syncs this list is actively running right now — the
+  //    set "Sync all" concurrency is measured against. `startedLocallyRef` is
+  //    the synchronous mirror the queue reads so a burst of starts sees its
+  //    own additions without waiting for a state flush. This shrinks the
+  //    moment a sync *settles*, not when its panel is dismissed.
+  //  - `shownLocally`: locally-owned panels that should stay mounted, each
+  //    keyed to a generation number. Added alongside `startedLocally` but only
+  //    removed on dismiss, so a settled panel can keep showing its result
+  //    after its slot is already free. The generation forces a fresh
+  //    SyncPanel (and a fresh `syncSource` call) if the same source is
+  //    started again before its old, still-showing panel is dismissed.
   const [mainActive, setMainActive] = useState<Set<string>>(new Set());
   const [startedLocally, setStartedLocally] = useState<Set<string>>(new Set());
   const startedLocallyRef = useRef<Set<string>>(new Set());
+  const [shownLocally, setShownLocally] = useState<Map<string, number>>(
+    new Map(),
+  );
+  const nextGenRef = useRef(0);
   const queueRef = useRef<string[]>([]);
 
   const [removing, setRemoving] = useState<string | null>(null);
@@ -118,6 +133,11 @@ export function SourceList({
     const toStart = queueRef.current.splice(0, slots);
     for (const id of toStart) startedLocallyRef.current.add(id);
     commitStartedLocally();
+    setShownLocally((prev) => {
+      const next = new Map(prev);
+      for (const id of toStart) next.set(id, ++nextGenRef.current);
+      return next;
+    });
   }, [commitStartedLocally]);
 
   const startLocalSync = useCallback(
@@ -125,15 +145,36 @@ export function SourceList({
       if (startedLocallyRef.current.has(id)) return;
       startedLocallyRef.current.add(id);
       commitStartedLocally();
+      setShownLocally((prev) => new Map(prev).set(id, ++nextGenRef.current));
     },
     [commitStartedLocally],
   );
 
-  // A sync finished, or its source was removed: forget it everywhere and let a
-  // waiting Sync-all source take the freed slot.
+  // A locally-owned sync reached a terminal status (F1/F9): free its queue
+  // slot right away so a waiting Sync-all source can take it. `shownLocally`
+  // is untouched — the panel keeps showing the result until dismissed.
+  const releaseSlot = useCallback(
+    (id: string) => {
+      if (startedLocallyRef.current.delete(id)) commitStartedLocally();
+      pumpQueue();
+    },
+    [commitStartedLocally, pumpQueue],
+  );
+
+  // A panel was dismissed, or its source was removed: forget it everywhere
+  // (queue slot, panel, main's active set) and let a waiting Sync-all source
+  // take the freed slot. Every removal here is a no-op if `releaseSlot`
+  // already ran for this id, so dismissing (or removing) a settled panel
+  // never double-releases.
   const releaseSync = useCallback(
     (id: string) => {
       if (startedLocallyRef.current.delete(id)) commitStartedLocally();
+      setShownLocally((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
       setMainActive((prev) => {
         if (!prev.has(id)) return prev;
         const next = new Set(prev);
@@ -394,8 +435,14 @@ export function SourceList({
 
       {filtered.map((source) => {
         const isExpanded = expandedId === source.id;
+        // Real activity (for the Sync button, "Sync all", and the last-sync
+        // status line) vs. panel visibility (for mounting SyncPanel) are
+        // deliberately different: a settled sync frees `isSyncing` right
+        // away, but its panel — `showPanel` — stays up until dismissed.
         const isSyncing = syncingIds.has(source.id);
-        const hasBottomPanel = isSyncing || isExpanded;
+        const localGen = shownLocally.get(source.id);
+        const showPanel = localGen !== undefined || mainActive.has(source.id);
+        const hasBottomPanel = showPanel || isExpanded;
         const statusMsg = isSyncing ? null : syncStatusMessage(source);
 
         return (
@@ -528,11 +575,18 @@ export function SourceList({
                 />
               </div>
             )}
-            {isSyncing && (
+            {showPanel && (
               <SyncPanel
+                // Keyed on the generation, not just the source id, so
+                // restarting a source whose previous panel is still showing
+                // a terminal result (F1/F9: its slot already freed, so the
+                // Sync button re-enabled) remounts a fresh panel instead of
+                // reusing one that already settled and won't sync again.
+                key={localGen !== undefined ? `local-${localGen}` : "main"}
                 sourceId={source.id}
                 sourceName={source.name}
-                autoStart={startedLocally.has(source.id)}
+                autoStart={localGen !== undefined}
+                onSettled={() => releaseSlot(source.id)}
                 onComplete={() => releaseSync(source.id)}
               />
             )}

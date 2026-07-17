@@ -6,7 +6,17 @@ import type { SyncProgress } from "../../../../shared/types";
 interface SyncPanelProps {
   sourceId: string;
   sourceName: string;
+  /** Dismisses the panel: called by the "complete" auto-timer, or by the user
+   * clicking Dismiss on an "error"/"canceled" panel. */
   onComplete: () => void;
+  /**
+   * Called exactly once when `status` moves off `syncing` into any terminal
+   * value (`complete`, `error`, `canceled`) — before the user has necessarily
+   * dismissed anything. SourceList uses this to free the sync's queue slot
+   * right away; the panel itself may stay mounted well past this point,
+   * showing the result until `onComplete` fires.
+   */
+  onSettled?: () => void;
   /**
    * Whether this panel owns the sync. `true` (default): it calls `syncSource`
    * and self-dismisses when the call settles. `false`: the sync is already
@@ -36,6 +46,7 @@ export function SyncPanel({
   sourceId,
   sourceName,
   onComplete,
+  onSettled,
   autoStart = true,
 }: SyncPanelProps): React.JSX.Element {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
@@ -52,6 +63,12 @@ export function SyncPanel({
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+  // Guards `onSettled` to fire exactly once per panel instance: the
+  // status-transition effect below re-runs whenever `onSettled`/`onComplete`
+  // change identity (the parent typically passes fresh inline closures each
+  // render), which would otherwise re-invoke it on every unrelated re-render
+  // while a terminal panel sits on screen waiting to be dismissed.
+  const settledRef = useRef(false);
 
   // M16: the sync is started exactly once (guarded), but the progress
   // subscription lives in its own *unguarded* effect. Folding both into one
@@ -96,12 +113,20 @@ export function SyncPanel({
   }, [status]);
 
   useEffect(() => {
-    // H3: only a clean completion self-dismisses. An "error" or "canceled" panel
-    // stays put so its reason remains on screen until the user acts.
+    // F1/F9: any terminal status frees the queue slot via onSettled, exactly
+    // once — a failed/canceled sync must not keep occupying a "Sync all" slot
+    // just because its panel is still showing the reason on screen.
+    if (status === "syncing") return;
+    if (!settledRef.current) {
+      settledRef.current = true;
+      onSettled?.();
+    }
+    // H3: only a clean completion self-dismisses on a timer. An "error" or
+    // "canceled" panel stays put — with a Dismiss button — until the user acts.
     if (status !== "complete") return;
     const timer = setTimeout(onComplete, 1500);
     return () => clearTimeout(timer);
-  }, [status, onComplete]);
+  }, [status, onSettled, onComplete]);
 
   function handleCancel(): void {
     window.api.cancelSync(sourceId).catch(() => {});
@@ -129,6 +154,11 @@ export function SyncPanel({
         {status === "syncing" && (
           <Button variant="ghost" size="xs" onClick={handleCancel}>
             Cancel
+          </Button>
+        )}
+        {(status === "error" || status === "canceled") && (
+          <Button variant="ghost" size="xs" onClick={onComplete}>
+            Dismiss
           </Button>
         )}
       </div>
@@ -174,7 +204,9 @@ export function SyncPanel({
         </details>
       )}
 
-      {status !== "syncing" && (
+      {/* F9: "error" already shows its reason via the `error` paragraph above;
+          an unconditional "Done" here used to contradict a failed sync. */}
+      {(status === "complete" || status === "canceled") && (
         <div className="text-xs text-muted-foreground space-y-0.5">
           {status === "complete" && progress && progress.skipped > 0 && (
             <p>{progress.skipped} unchanged, skipped</p>
@@ -185,7 +217,7 @@ export function SyncPanel({
               removed
             </p>
           )}
-          <p>{status === "complete" ? "Dismissing…" : "Done"}</p>
+          <p>{status === "complete" ? "Dismissing…" : "Canceled"}</p>
         </div>
       )}
     </div>
