@@ -133,6 +133,17 @@ export const migrations: Migration[] = [
       `ALTER TABLE sources ADD COLUMN last_sync_error_count INTEGER NOT NULL DEFAULT 0`,
     ],
   },
+  {
+    version: 7,
+    statements: [
+      // A user with an embedding_provider setting completed the provider step
+      // on a build that predates the onboarding_complete flag — don't re-onboard them.
+      `INSERT INTO settings (key, value)
+       SELECT 'onboarding_complete', 'true'
+       WHERE EXISTS (SELECT 1 FROM settings WHERE key = 'embedding_provider')
+         AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'onboarding_complete')`,
+    ],
+  },
 ];
 
 const LATEST_VERSION = Math.max(...migrations.map((m) => m.version));

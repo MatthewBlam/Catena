@@ -139,6 +139,55 @@ describe("migration v6", () => {
   });
 });
 
+describe("migration v7", () => {
+  let db: Database.Database;
+
+  function getSetting(key: string): string | undefined {
+    return (
+      db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
+        | { value: string }
+        | undefined
+    )?.value;
+  }
+
+  afterEach(() => db.close());
+
+  it("backfills onboarding_complete for installs that already configured a provider", () => {
+    db = createUnmigratedTestDb();
+    migrateTo(db, 6);
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('embedding_provider', 'cohere')",
+    ).run();
+
+    runMigrations(db);
+
+    expect(getSetting("onboarding_complete")).toBe("true");
+  });
+
+  it("leaves onboarding_complete unset on a fresh install with no provider configured", () => {
+    db = createUnmigratedTestDb();
+
+    runMigrations(db);
+
+    expect(getSetting("onboarding_complete")).toBeUndefined();
+  });
+
+  it("does not overwrite an existing onboarding_complete value", () => {
+    db = createUnmigratedTestDb();
+    migrateTo(db, 6);
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('embedding_provider', 'cohere')",
+    ).run();
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('onboarding_complete', 'false')",
+    ).run();
+
+    runMigrations(db);
+
+    expect(getSetting("onboarding_complete")).toBe("false");
+  });
+});
+
 describe("pre-migration backup", () => {
   let dir: string;
   let dbPath: string;
