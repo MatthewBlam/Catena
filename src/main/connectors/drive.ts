@@ -185,6 +185,15 @@ export class DriveConnector implements Connector {
       let content: string | null;
       try {
         content = await this.extractContent(file);
+        // A transient empty result (Google export 200-with-empty-body flake, a
+        // PDF/docx parser returning "" without throwing) is indistinguishable
+        // from a genuine emptying on the first try. Retry once, same file, same
+        // method, and only trust "" once the retry confirms it — otherwise a
+        // flake wipes the doc's chunks and the doc never gets re-checked, since
+        // it re-enters the incremental-skip map at its unchanged modifiedTime.
+        if (content === "") {
+          content = await this.extractContent(file);
+        }
       } catch (err) {
         console.warn(
           `Skipping file "${file.name}" (${file.id}): ${err instanceof Error ? err.message : err}`,

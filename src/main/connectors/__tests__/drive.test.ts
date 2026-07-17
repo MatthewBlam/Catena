@@ -372,6 +372,83 @@ describe("DriveConnector", () => {
     expect(docs[0].content).toBe("");
   });
 
+  /**
+   * A transient empty export (200-with-empty-body flake) is indistinguishable
+   * from a genuine emptying at the first call. Retrying once, same file, same
+   * method, and trusting the second result recovers from the flake instead of
+   * wiping the document's chunks and then never re-checking it (the doc would
+   * re-enter the incremental-skip map keyed to the unchanged modifiedTime).
+   */
+  it("retries once when export returns empty, then yields the retried content", async () => {
+    mockFilesList.mockResolvedValue({
+      data: {
+        files: [makeDriveFile()],
+        nextPageToken: undefined,
+      },
+    });
+    mockFilesExport
+      .mockResolvedValueOnce({ data: "" })
+      .mockResolvedValueOnce({ data: "hello" });
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    const docs: RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].content).toBe("hello");
+    expect(mockFilesExport).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * Symmetric with the case above: if the retry *also* comes back empty, that's
+   * no longer a flake — it's a genuinely emptied document, and the empty content
+   * must still propagate so the doc's stale chunks get cleared.
+   */
+  it("treats two consecutive empty exports as a genuine emptied document", async () => {
+    mockFilesList.mockResolvedValue({
+      data: {
+        files: [makeDriveFile()],
+        nextPageToken: undefined,
+      },
+    });
+    mockFilesExport
+      .mockResolvedValueOnce({ data: "" })
+      .mockResolvedValueOnce({ data: "" });
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    const docs: RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].content).toBe("");
+    expect(mockFilesExport).toHaveBeenCalledTimes(2);
+  });
+
+  /** The retry must only fire on an empty result, not on every happy-path file. */
+  it("does not retry when the first export already returns content", async () => {
+    mockFilesList.mockResolvedValue({
+      data: {
+        files: [makeDriveFile()],
+        nextPageToken: undefined,
+      },
+    });
+    mockFilesExport.mockResolvedValue({ data: "Hello from Google Docs" });
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    const docs: RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].content).toBe("Hello from Google Docs");
+    expect(mockFilesExport).toHaveBeenCalledTimes(1);
+  });
+
   it("handles PDF files", async () => {
     mockFilesList.mockResolvedValue({
       data: {
