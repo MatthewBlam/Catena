@@ -3,6 +3,7 @@ import { SearchInput } from "@renderer/components/search/SearchInput";
 import { ResultCard } from "@renderer/components/search/ResultCard";
 import { EmptyState } from "@renderer/components/search/EmptyState";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { getOllamaStatus } from "@renderer/lib/ollama";
 import type { SearchResult, EmbeddingHealth } from "../../../shared/types";
 
 interface SearchPageProps {
@@ -28,7 +29,16 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   // null = not yet loaded (show the suggested-questions empty state, not the
   // "connect a source" one — otherwise it flashes on every mount).
   const [sourceCount, setSourceCount] = useState<number | null>(null);
+  // F7: null = readiness not checked yet. Treated the same as "ready" for
+  // rendering so the disabled banner never flashes on the initial mount while
+  // the check is in flight — it only appears once we positively know there is
+  // no usable provider.
+  const [providerReady, setProviderReady] = useState<boolean | null>(null);
+  const [embeddingProvider, setEmbeddingProvider] = useState<string | null>(
+    null,
+  );
   const queryRef = useRef(query);
+  const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -49,17 +59,43 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
       .catch(() => {});
   }, []);
 
+  // F7: mirrors App.tsx's checkReady provider check, but scoped to this page —
+  // App deliberately does NOT re-run its own readiness gate when a Cohere key is
+  // removed in Settings (M12, so the user isn't yanked into onboarding), which
+  // means nothing else gates search once a key is gone. Ollama readiness only
+  // requires it to be reachable, matching App.tsx; it does not require an
+  // embedding model to be pulled, same gap App.tsx has.
+  const refreshReadiness = useCallback(() => {
+    window.api
+      .getEmbeddingProvider()
+      .then(async (provider) => {
+        const isReady =
+          provider === "ollama"
+            ? (await getOllamaStatus()).available
+            : await window.api.hasSecret("cohere_api_key");
+        setEmbeddingProvider(provider);
+        providerReadyRef.current = isReady;
+        setProviderReady(isReady);
+      })
+      .catch(() => {
+        // Transient IPC failure: leave the previous readiness state rather than
+        // flashing the disabled banner over a check unrelated to provider setup.
+      });
+  }, []);
+
   // H11: re-check every time the page becomes visible — which is exactly when
   // the user returns from switching providers in Settings — rather than once per
   // session. The old once-gate meant the mismatch warning never fired for the
-  // flow that *creates* the mismatch. Source count is refreshed alongside so the
-  // "connect a source" empty state clears the moment the user adds one.
+  // flow that *creates* the mismatch. Source count and provider readiness are
+  // refreshed alongside so the "connect a source" empty state and the "no
+  // provider" banner clear the moment the user fixes them in Settings.
   useEffect(() => {
     if (visible) {
       refreshHealth();
       refreshSources();
+      refreshReadiness();
     }
-  }, [visible, refreshHealth, refreshSources]);
+  }, [visible, refreshHealth, refreshSources, refreshReadiness]);
 
   // And after any sync/source change: a re-embed can clear a mismatch (or create
   // one), and adding/removing sources changes the empty-state.
@@ -67,8 +103,9 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     return window.api.onSourcesChanged(() => {
       refreshHealth();
       refreshSources();
+      refreshReadiness();
     });
-  }, [refreshHealth, refreshSources]);
+  }, [refreshHealth, refreshSources, refreshReadiness]);
 
   // Unmounting leaves any in-flight search with no consumer — but it is still
   // holding a SQLite iterator open on the main thread. (App swaps this page out
@@ -81,7 +118,10 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
 
   const handleSearch = useCallback(async (searchQuery?: string) => {
     const q = (searchQuery ?? queryRef.current).trim();
-    if (!q) return;
+    // F7: belt-and-suspenders alongside the disabled input — the empty-state's
+    // suggested-question buttons submit through this same function and are not
+    // wired to the input's `disabled` attribute.
+    if (!q || providerReadyRef.current === false) return;
 
     setLastQuery(q);
     setLastRewritten(null);
@@ -143,6 +183,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
           onChange={setQuery}
           onSubmit={() => handleSearch()}
           loading={loading}
+          disabled={providerReady === false}
         />
       </div>
 
@@ -150,6 +191,14 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
         className="w-full max-w-3xl mx-auto px-10 flex-1 space-y-3"
         aria-live="polite"
       >
+        {providerReady === false && (
+          <ErrorBanner variant="warning">
+            {embeddingProvider === "ollama"
+              ? "Search is disabled — start Ollama to search"
+              : "Search is disabled — add your API key in Settings"}
+          </ErrorBanner>
+        )}
+
         {hasMismatch && (
           <ErrorBanner
             variant="warning"

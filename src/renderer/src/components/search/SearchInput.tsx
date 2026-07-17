@@ -7,6 +7,7 @@ interface SearchInputProps {
   onChange: (value: string) => void;
   onSubmit: () => void;
   loading: boolean;
+  disabled?: boolean;
 }
 
 export function SearchInput({
@@ -14,6 +15,7 @@ export function SearchInput({
   onChange,
   onSubmit,
   loading,
+  disabled = false,
 }: SearchInputProps): React.JSX.Element {
   return (
     <div className="relative">
@@ -31,11 +33,13 @@ export function SearchInput({
         value={value}
         onChange={(e) => onChange((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && value.trim() && !loading) onSubmit();
+          if (e.key === "Enter" && value.trim() && !loading && !disabled)
+            onSubmit();
         }}
         className="[&_[data-slot=input]]:pl-9"
         size="lg"
         autoFocus
+        disabled={disabled}
       />
     </div>
   );
