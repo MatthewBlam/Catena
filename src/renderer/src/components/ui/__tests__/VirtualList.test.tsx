@@ -126,4 +126,75 @@ describe("VirtualList", () => {
     expect(rows.length).toBe(fewItems.length);
     expect(screen.getByText("Row 0")).toBeInTheDocument();
   });
+
+  it("reconciles scroll state with the DOM across a shrink-then-regrow race (regression: blank viewport, regrow direction)", () => {
+    // A second blank-viewport path, from the opposite direction. Real browsers
+    // clamp a container's *actual* `scrollTop` synchronously, as part of
+    // layout, the instant its scrollable content shrinks below the current
+    // position — reading `el.scrollTop` right after that DOM mutation always
+    // returns the already-clamped value, with no dependency on the 'scroll'
+    // event (which is not guaranteed to land before the next commit). If
+    // `items` shrinks and then grows back — a filter typed, then cleared,
+    // before that event is processed — a fix that only reacted to the scroll
+    // event would leave React's `scrollTop` state stuck at the pre-shrink
+    // offset: the render-time clamp (previous test) hides that while the list
+    // is still small, but once `items` regrows the clamp stops biting and the
+    // window re-anchors to the stale deep offset while the DOM is really
+    // scrolled near the top — rows render, just not the ones actually in
+    // view.
+    //
+    // jsdom does no real layout, so nothing auto-clamps `scrollTop` for us;
+    // `realScrollTop` stands in for the DOM's true position and is mutated by
+    // hand at the shrink step only, to model that synchronous browser clamp.
+    // It is deliberately left untouched across the regrow, matching real
+    // browsers: growing content never moves the scroll position back down.
+    const rowHeightPx = 40;
+    let realScrollTop = 1000;
+    stubGetter(HTMLElement.prototype, "clientHeight", () => 200);
+    stubGetter(HTMLElement.prototype, "scrollTop", () => realScrollTop);
+    stubGetter(HTMLElement.prototype, "offsetHeight", function () {
+      return isRow(this) ? rowHeightPx : 0;
+    });
+
+    const manyItems = Array.from({ length: 100 }, (_, i) => ({ id: i }));
+    const { rerender } = render(
+      <VirtualList
+        items={manyItems}
+        getKey={(item) => String(item.id)}
+        renderItem={(item) => <span>Row {item.id}</span>}
+      />,
+    );
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThan(0);
+
+    // Shrink: 3 items * 40px = 120px of content is under the 200px viewport,
+    // so a real browser can't scroll at all and clamps scrollTop to 0 as
+    // part of the same layout pass that shrank the content.
+    realScrollTop = 0;
+    const fewItems = manyItems.slice(0, 3);
+    rerender(
+      <VirtualList
+        items={fewItems}
+        getKey={(item) => String(item.id)}
+        renderItem={(item) => <span>Row {item.id}</span>}
+      />,
+    );
+    expect(screen.getAllByRole("listitem").length).toBe(3);
+
+    // Regrow before any corrective 'scroll' event — `realScrollTop` is
+    // deliberately left at 0, since growing content doesn't restore a
+    // previous scroll offset in a real browser either.
+    rerender(
+      <VirtualList
+        items={manyItems}
+        getKey={(item) => String(item.id)}
+        renderItem={(item) => <span>Row {item.id}</span>}
+      />,
+    );
+
+    // The window must follow the real (near-top) DOM position, not the
+    // stale pre-shrink offset — row 0 must be among the rendered rows.
+    // Pre-fix, state stayed latched at 1000 and this rendered rows ~19-35
+    // instead, leaving the actually-visible top of the list blank.
+    expect(screen.getByText("Row 0")).toBeInTheDocument();
+  });
 });

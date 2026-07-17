@@ -46,6 +46,7 @@ export function VirtualList<T>({
   // huge list never renders every row for even one commit; the real height is
   // measured before paint below.
   const [viewport, setViewport] = useState(estimatedRowHeight * 14);
+  const total = items.length;
 
   // Track scroll offset and visible height. `useLayoutEffect` + an initial
   // measure means the first painted frame is already windowed; the
@@ -84,6 +85,33 @@ export function VirtualList<T>({
     // `measureRow` below) — this re-subscribes at most once, not a loop.
   }, [rowHeight]);
 
+  // The browser clamps the container's *real* `scrollTop` synchronously, as
+  // part of layout, the moment the scrollable content (`total * rowHeight`)
+  // shrinks below the current position — reading `el.scrollTop` right after
+  // a DOM mutation always returns that already-clamped value. But our own
+  // `scrollTop` state above is only ever written by the scroll *event*
+  // listener, and dispatching that event is not guaranteed to happen (or be
+  // processed) before the next commit. If `items` shrinks and then grows
+  // back — a filter typed, then cleared, before that event lands — `state`
+  // can still hold the pre-shrink offset. The render-time clamp below hides
+  // that gap while `items` is still small (it derives its own clamp from
+  // the shrunk `total`), but once `items` grows back `maxScrollTop` grows
+  // too, the clamp stops biting, and the window re-anchors to the stale
+  // offset while the DOM is really scrolled near the top — rows render,
+  // just not the ones actually in view. Blank viewport, same family of bug,
+  // from the regrow direction.
+  //
+  // Reconcile explicitly whenever `total` changes: read the live (already
+  // browser-clamped) `el.scrollTop` and adopt it into state if the two
+  // disagree. Only updates on an actual mismatch, so it cannot become a
+  // render-feedback loop — and it's keyed on `total`, not `rowHeight`, so it
+  // cannot interact with the measure loop fixed in cffc45a.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setScrollTop((prev) => (el.scrollTop === prev ? prev : el.scrollTop));
+  }, [total]);
+
   // All rows share a height; measure one real row exactly once and lock it in.
   // A callback ref (not an effect) fires when the first row mounts — including
   // the first time rows appear after a loading/empty state — but it records the
@@ -106,7 +134,6 @@ export function VirtualList<T>({
     }
   }, []);
 
-  const total = items.length;
   const visibleCount = Math.max(1, Math.ceil(viewport / rowHeight));
   // Clamp the offset used to derive the window to the scrollable range for
   // the *current* item count, not whatever `scrollTop` last reported. Filter
