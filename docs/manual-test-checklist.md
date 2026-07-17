@@ -317,3 +317,10 @@ several (virtualization especially) could not be verified without a display.
 ### Entitlements (7.2) -- needs a signed build
 
 - [ ] `pnpm make:mac` produces an app that launches and loads/rebuilds better-sqlite3 under the trimmed hardened-runtime entitlements (the removed `allow-dyld-environment-variables` was not needed)
+
+### Sync queue release & dismissable error panels (F1/F9)
+
+- [ ] Fail a sync (e.g. bad API key): the panel shows the failure with a working Dismiss button
+- [ ] While that failed sync's panel is still shown (not yet dismissed), the source's Sync button re-enables
+- [ ] "Sync all" with 2 failing sources still goes on to process the remaining sources (the queue does not deadlock)
+- [ ] Clicking Sync again (or re-running "Sync all") on a source whose error panel is still shown actually restarts the sync -- not just re-disables the button with nothing happening

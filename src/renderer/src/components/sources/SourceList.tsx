@@ -443,7 +443,14 @@ export function SourceList({
         const localGen = shownLocally.get(source.id);
         const showPanel = localGen !== undefined || mainActive.has(source.id);
         const hasBottomPanel = showPanel || isExpanded;
-        const statusMsg = isSyncing ? null : syncStatusMessage(source);
+        // Gate on `showPanel`, not just `isSyncing`: main broadcasts
+        // `sources:changed` (refreshing `lastSyncStatus`) on every sync exit
+        // path, including error/canceled, at roughly the same moment
+        // `isSyncing` frees up — but the panel itself stays mounted until
+        // dismissed. Without this, the row would show "Last sync failed"
+        // right above a SyncPanel already showing the same failure.
+        const statusMsg =
+          isSyncing || showPanel ? null : syncStatusMessage(source);
 
         return (
           <div key={source.id}>
