@@ -10,6 +10,21 @@ let _db: Database.Database | null = null;
 const DB_SUFFIXES = ["", "-wal", "-shm"] as const;
 
 /**
+ * The four pragmas every handle onto this database must open with — production
+ * or test. `recursive_triggers` is required for REPLACE-induced deletes to fire
+ * the chunks_fts delete trigger (see upsertChunks in database.ts); the rest are
+ * ordinary durability and lock-timeout settings. Exported so test-db.ts can
+ * call the same function instead of keeping its own copy of this list in sync
+ * by convention.
+ */
+export function applyPragmas(db: Database.Database): void {
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  db.pragma("recursive_triggers = ON");
+  db.pragma("busy_timeout = 5000");
+}
+
+/**
  * Opens the database and proves it is actually readable.
  *
  * `new Database()` does not touch a single page — it succeeds on a file full of
@@ -21,11 +36,7 @@ const DB_SUFFIXES = ["", "-wal", "-shm"] as const;
 function openAndVerify(dbPath: string): Database.Database {
   const db = new Database(dbPath);
   try {
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    // Required for REPLACE-induced deletes to fire the chunks_fts delete trigger.
-    db.pragma("recursive_triggers = ON");
-    db.pragma("busy_timeout = 5000");
+    applyPragmas(db);
 
     const result = db.pragma("quick_check", { simple: true });
     if (result !== "ok") {

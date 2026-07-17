@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { Spinner } from "@renderer/components/ui/spinner";
+import { toErrorMessage } from "@renderer/lib/errors";
 import type { SyncProgress } from "../../../../shared/types";
 
 interface SyncPanelProps {
@@ -101,7 +102,7 @@ export function SyncPanel({
         // "error" unconditionally would flash "Sync canceled" then an abort
         // failure over it.
         if (statusRef.current !== "syncing") return;
-        setError(err instanceof Error ? err.message : "Sync failed");
+        setError(toErrorMessage(err, "Sync failed"));
         setStatus("error");
       });
   }, [sourceId, autoStart]);

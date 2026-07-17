@@ -25,22 +25,25 @@ vi.mock("../sync-manager", () => ({
   }),
 }));
 
-vi.mock("../../ipc/sync-handlers", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../ipc/sync-handlers")>();
-  return {
-    ...actual,
-    // The real one reaches for Notion tokens and Google OAuth.
-    getConnectorForSource: vi.fn(async (db: unknown) => {
-      h.connectorCalls.push(db);
-      return { fetchDocuments: vi.fn() };
-    }),
-  };
-});
+// `getConnectorForSource` now runs from inside `runManagedSync`, a same-module
+// call within sync-handlers.ts that `vi.mock` on that module cannot intercept
+// (mocking an export doesn't rewrite the module's own internal references to
+// it). Faking `loadSecret` instead reaches the same effect one layer down: a
+// real `getConnectorForSource` sees a token, builds a real (but
+// network-inert — see notion.ts's constructor) `NotionConnector`, and never
+// throws "Notion token not found". `db` is recorded here for the same reason
+// the old mock recorded it: proving `getConnectorForSource` never sees a
+// null database after `stop()`.
+vi.mock("../../auth/storage", () => ({
+  loadSecret: vi.fn((db: unknown) => {
+    h.connectorCalls.push(db);
+    return "fake-token";
+  }),
+}));
 
 import { syncScheduler } from "../scheduler";
 import { createTestDb } from "../../db/__tests__/test-db";
-import { insertSource, upsertSetting } from "../../db/database";
+import { insertSource, upsertSetting, deleteSource } from "../../db/database";
 import { activeSyncs } from "../../ipc/sync-handlers";
 
 const INTERVAL_MS = 1000;
@@ -215,5 +218,28 @@ describe("SyncScheduler state (M6)", () => {
 
     // Three live intervals would have queued three ticks.
     expect(h.syncCalls).toEqual(["s1"]);
+  });
+
+  it("skips a source deleted after the tick's snapshot was taken (item 3)", async () => {
+    // s1's sync hangs, giving the test a window to delete s2 out from under
+    // the tick's `getAllSources` snapshot before the loop ever reaches it.
+    seed(db, ["s1", "s2"]);
+    syncScheduler.start(db);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await settle();
+    expect(h.syncCalls).toEqual(["s1"]); // parked on s1
+    const connectorCallsBeforeDeletion = h.connectorCalls.length;
+
+    deleteSource(db, "s2");
+
+    releaseAll();
+    await settle();
+
+    // s2 must never be synced — not a wasted provider fetch, not a
+    // `getConnectorForSource`/`loadSecret` call, not started-telemetry for a
+    // source that no longer exists.
+    expect(h.syncCalls).toEqual(["s1"]);
+    expect(h.connectorCalls).toHaveLength(connectorCallsBeforeDeletion);
   });
 });

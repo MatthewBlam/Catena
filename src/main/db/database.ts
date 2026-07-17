@@ -288,8 +288,14 @@ export function updateDocumentSyncStatus(
 /**
  * Sets status and content_hash together. Only ever call this in the same
  * transaction as the chunk write — see replaceChunksForDocument.
+ *
+ * Not exported: its only caller is replaceChunksForDocument, below, in the same
+ * transaction as the chunk write. Exporting it would hand a caller elsewhere in
+ * the codebase a way to write a hash outside that transaction — the exact
+ * violation of the content_hash invariant this function's contract depends on
+ * not happening.
  */
-export function updateDocumentSyncState(
+function updateDocumentSyncState(
   db: Database.Database,
   id: string,
   status: string,

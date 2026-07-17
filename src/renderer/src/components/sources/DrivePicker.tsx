@@ -11,6 +11,7 @@ import { Input } from "@renderer/components/ui/input";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { VirtualList } from "@renderer/components/ui/VirtualList";
+import { toErrorMessage, authAwareMessage } from "@renderer/lib/errors";
 import type { DriveItemSummary } from "../../../../shared/types";
 
 interface DrivePickerProps {
@@ -75,13 +76,8 @@ export function DrivePicker({
       setItems(result);
     } catch (err) {
       if (!mountedRef.current || id !== requestIdRef.current) return;
-      const msg =
-        err instanceof Error ? err.message : "Failed to load Drive items";
-      setError(
-        msg.includes("401") || msg.toLowerCase().includes("unauthorized")
-          ? "Session expired — please reconnect in Settings."
-          : msg,
-      );
+      const msg = toErrorMessage(err, "Failed to load Drive items");
+      setError(authAwareMessage(msg));
     } finally {
       if (mountedRef.current && id === requestIdRef.current) setLoading(false);
     }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { Spinner } from "@renderer/components/ui/spinner";
+import { toErrorMessage } from "@renderer/lib/errors";
 import { NotionPicker } from "./NotionPicker";
 
 interface ConnectNotionButtonProps {
@@ -32,8 +33,7 @@ export function ConnectNotionButton({
       await window.api.startNotionOAuth();
       setStep("pick");
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to connect to Notion";
+      const msg = toErrorMessage(err, "Failed to connect to Notion");
       if (msg === "OAuth canceled") {
         setStep("idle");
       } else {

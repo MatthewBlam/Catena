@@ -5,6 +5,7 @@ import { EmptyState } from "@renderer/components/search/EmptyState";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { getOllamaStatus } from "@renderer/lib/ollama";
 import { debounce } from "@renderer/lib/utils";
+import { toErrorMessage } from "@renderer/lib/errors";
 import type { SearchResult, EmbeddingHealth } from "../../../shared/types";
 
 interface SearchPageProps {
@@ -171,9 +172,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
       setLastRewritten(response.rewrittenQuery ?? null);
     } catch (err) {
       if (id !== requestIdRef.current) return;
-      setError(
-        err instanceof Error ? err.message : "Search failed. Try again.",
-      );
+      setError(toErrorMessage(err, "Search failed. Try again."));
       setResults(null);
     } finally {
       if (id === requestIdRef.current) setLoading(false);

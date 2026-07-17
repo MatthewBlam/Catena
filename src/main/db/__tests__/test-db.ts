@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { runMigrations } from "../migrations";
+import { applyPragmas } from "../singleton";
 
 /**
  * An open database with the singleton's pragmas but no schema.
@@ -7,14 +8,10 @@ import { runMigrations } from "../migrations";
  */
 export function createUnmigratedTestDb(): Database.Database {
   const db = new Database(":memory:");
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.pragma("recursive_triggers = ON");
-  db.pragma("busy_timeout = 5000");
+  applyPragmas(db);
   return db;
 }
 
-/** Mirrors src/main/db/singleton.ts exactly. If you change the pragmas there, change them here. */
 export function createTestDb(): Database.Database {
   const db = createUnmigratedTestDb();
   runMigrations(db);

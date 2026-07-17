@@ -1,18 +1,17 @@
 import type Database from "better-sqlite3";
-import { getAllSources, getSetting, upsertSetting } from "../db/database";
+import {
+  getAllSources,
+  getSourceById,
+  getSetting,
+  upsertSetting,
+} from "../db/database";
 import {
   activeSyncs,
-  broadcastSourcesChanged,
   buildEmbedConfig,
-  getConnectorForSource,
-  publishSyncProgress,
-  recordSyncOutcome,
   registerSync,
-  type SyncOutcomeInput,
+  runManagedSync,
 } from "../ipc/sync-handlers";
-import { syncSource } from "./sync-manager";
 import type { SchedulerState } from "../../shared/types";
-import { track } from "../telemetry/posthog";
 
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -133,74 +132,33 @@ class SyncScheduler {
         // old signal will never fire again.
         if (signal.aborted || gen !== this.generation) break;
         if (activeSyncs.has(source.id)) continue;
+        // The snapshot from `getAllSources` above can go stale mid-tick: a
+        // source removed while an earlier source in this same tick was
+        // syncing is still in `sources`, and syncing it anyway means a full
+        // wasted provider fetch whose per-document writes then fail on a
+        // vanished foreign key — swallowed, but not free, and not honest
+        // telemetry either.
+        if (!getSourceById(db, source.id)) continue;
 
         const { controller, finish } = registerSync(source.id);
         signal.addEventListener("abort", () => controller.abort(), {
           once: true,
         });
 
-        const syncStart = Date.now();
-        const syncState: SyncOutcomeInput = {
-          lastProgress: null,
-          thrown: undefined,
-        };
-
-        track("commons_sync_started", {
-          source_provider: source.provider,
-          trigger: "auto",
-        });
-
-        try {
-          const connector = await getConnectorForSource(db, source);
-          await syncSource(
-            db,
-            source.id,
-            source.provider,
-            connector,
-            embedConfig,
-            (progress) => {
-              syncState.lastProgress = progress;
-              publishSyncProgress(progress);
+        const succeeded = await runManagedSync(
+          db,
+          source,
+          embedConfig,
+          controller,
+          finish,
+          {
+            trigger: "auto",
+            onError: (err) => {
+              console.error(`Auto-sync failed for source ${source.id}:`, err);
             },
-            controller.signal,
-          );
-          anySuccess = true;
-        } catch (err) {
-          syncState.thrown = err;
-          console.error(`Auto-sync failed for source ${source.id}:`, err);
-        } finally {
-          // `finish` resolves the promise `cancelSync` is blocked on, so it has
-          // to run even if anything here throws.
-          try {
-            recordSyncOutcome(
-              db,
-              source.id,
-              syncState,
-              controller.signal.aborted,
-            );
-            track("commons_sync_completed", {
-              source_provider: source.provider,
-              trigger: "auto",
-              duration_ms: Date.now() - syncStart,
-              doc_count: syncState.lastProgress?.current ?? 0,
-              skipped_count: syncState.lastProgress?.skipped ?? 0,
-              error_count: syncState.lastProgress?.errors.length ?? 0,
-              phase: syncState.thrown !== undefined ? "error" : "done",
-              embedding_provider: embedConfig.provider,
-            });
-          } catch (err) {
-            // Best-effort bookkeeping. On quit the database is closed without
-            // waiting for this unwind, and the tick is a floating promise — an
-            // epilogue that throws here becomes an unhandled rejection.
-            console.error(
-              `Failed to record sync outcome for source ${source.id}:`,
-              err,
-            );
-          } finally {
-            finish();
-            broadcastSourcesChanged();
-          }
-        }
+          },
+        );
+        if (succeeded) anySuccess = true;
       }
     } finally {
       // A tick from a previous generation owns none of this any more. `stop()`

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { Spinner } from "@renderer/components/ui/spinner";
+import { toErrorMessage } from "@renderer/lib/errors";
 import { DrivePicker } from "./DrivePicker";
 
 interface ConnectDriveButtonProps {
@@ -27,10 +28,7 @@ export function ConnectDriveButton({
       await window.api.startGoogleOAuth();
       setStep("pick");
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Failed to connect to Google Drive";
+      const msg = toErrorMessage(err, "Failed to connect to Google Drive");
       if (msg === "OAuth canceled") {
         setStep("idle");
       } else {

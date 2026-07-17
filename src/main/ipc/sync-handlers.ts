@@ -3,6 +3,7 @@ import { getDb } from "../db/singleton";
 import {
   getSourceById,
   updateSourceSyncState,
+  type SourceRow,
   type SyncOutcome,
 } from "../db/database";
 import { loadSecret } from "../auth/storage";
@@ -116,11 +117,13 @@ export async function cancelAllSyncs(): Promise<void> {
  * The last progress event seen for each running sync, so a renderer that mounts
  * mid-sync can be told what it missed.
  *
- * Cleared by `finish()` — the end of the sync — and, as an optimization, by a
- * terminal phase. It must be the former: a sync that dies in
- * `getConnectorForSource` never emits a terminal phase at all. And
- * `getActiveSyncProgress` reads through `activeSyncs`, the real authority on
- * whether a sync is running, so nothing here can be reported after its sync.
+ * Cleared only by `finish()` — the end of the sync. A terminal-phase event used
+ * to also clear its entry here, as an optimization, but that ran in the same
+ * synchronous continuation as `finish()` a few lines later, so it bought
+ * nothing observable. And `getActiveSyncProgress` reads through `activeSyncs`,
+ * the real authority on whether a sync is running, so nothing here is ever
+ * reported after its sync — a terminal entry lingering the extra moment until
+ * `finish()` runs is invisible to every reader.
  */
 const lastProgressBySource = new Map<string, SyncProgress>();
 
@@ -145,11 +148,7 @@ function broadcast(channel: string, payload?: unknown): void {
  * progress went nowhere at all.
  */
 export function publishSyncProgress(progress: SyncProgress): void {
-  if (progress.phase === "done" || progress.phase === "error") {
-    lastProgressBySource.delete(progress.sourceId);
-  } else {
-    lastProgressBySource.set(progress.sourceId, progress);
-  }
+  lastProgressBySource.set(progress.sourceId, progress);
   broadcast("sync:progress", progress);
 }
 
@@ -290,6 +289,110 @@ export async function getConnectorForSource(
   );
 }
 
+export type SyncTrigger = "manual" | "auto";
+
+export interface RunManagedSyncOptions {
+  trigger: SyncTrigger;
+  /**
+   * Called from inside the `catch`, after the error is already stashed into
+   * `syncState.thrown` but before the outcome is recorded. The manual path
+   * rethrows here — a throw from inside a `catch` still runs the `finally`
+   * below before it propagates, so the epilogue completes exactly as it does
+   * for a swallowed error, then `sync:start`'s promise rejects. The scheduler
+   * logs and returns normally instead, so its tick can move on to the next
+   * source.
+   */
+  onError: (err: unknown) => void;
+}
+
+/**
+ * One sync attempt plus everything both call sites did around it: acquire the
+ * connector, run `syncSource` with a progress callback that stashes into
+ * `lastProgressBySource` via `publishSyncProgress`, then — however the attempt
+ * ended — record the outcome, fire the completion telemetry, resolve
+ * `finish()`, and tell every window `sources:changed`.
+ *
+ * `controller` and `finish` are the caller's, from its own `registerSync`
+ * call, not this function's — the scheduler needs `controller` in hand
+ * *before* calling this, to bridge its master abort signal onto it. Wiring
+ * that up after this function had already started would miss an abort that
+ * lands while still inside `getConnectorForSource`.
+ *
+ * Returns whether the attempt succeeded (no thrown error). Only the
+ * scheduler's `anySuccess` flag needs the answer — a `manual` sync that fails
+ * takes the `onError` rethrow instead of a normal return.
+ */
+export async function runManagedSync(
+  db: ReturnType<typeof getDb>,
+  source: SourceRow,
+  embedConfig: EmbedConfig,
+  controller: AbortController,
+  finish: () => void,
+  { trigger, onError }: RunManagedSyncOptions,
+): Promise<boolean> {
+  const startMs = Date.now();
+  const syncState: SyncOutcomeInput = {
+    lastProgress: null,
+    thrown: undefined,
+  };
+
+  track("commons_sync_started", {
+    source_provider: source.provider,
+    trigger,
+  });
+
+  try {
+    const connector = await getConnectorForSource(db, source);
+
+    await syncSource(
+      db,
+      source.id,
+      source.provider,
+      connector,
+      embedConfig,
+      (progress) => {
+        syncState.lastProgress = progress;
+        publishSyncProgress(progress);
+      },
+      controller.signal,
+    );
+  } catch (err) {
+    syncState.thrown = err;
+    onError(err);
+  } finally {
+    // `finish` resolves the promise `cancelSync` is blocked on, so it has to
+    // run even if anything here throws — otherwise a cancel hangs for 15
+    // seconds. And the outcome has to be written before `finish`, or
+    // `sources:remove` could delete the row between the two.
+    try {
+      recordSyncOutcome(db, source.id, syncState, controller.signal.aborted);
+      track("commons_sync_completed", {
+        source_provider: source.provider,
+        trigger,
+        duration_ms: Date.now() - startMs,
+        doc_count: syncState.lastProgress?.current ?? 0,
+        skipped_count: syncState.lastProgress?.skipped ?? 0,
+        error_count: syncState.lastProgress?.errors.length ?? 0,
+        phase: syncState.thrown !== undefined ? "error" : "done",
+        embedding_provider: embedConfig.provider,
+      });
+    } catch (err) {
+      // Best-effort bookkeeping. On quit, `will-quit` closes the database
+      // without waiting for the unwind, so this write lands on a closed
+      // connection — and an epilogue that throws would replace the sync's
+      // real result with an exception about recording it.
+      console.error(`Failed to record sync outcome for ${source.id}:`, err);
+    } finally {
+      finish();
+      // The row's sync state just changed, however it ended. Tell every
+      // window to refetch rather than trusting them to have followed along.
+      broadcastSourcesChanged();
+    }
+  }
+
+  return syncState.thrown === undefined;
+}
+
 export function registerSyncHandlers(): void {
   ipcMain.handle("sync:start", async (_event, sourceId: string) => {
     const db = getDb();
@@ -301,67 +404,14 @@ export function registerSyncHandlers(): void {
     }
 
     const { controller, finish } = registerSync(sourceId);
-
     const embedConfig = buildEmbedConfig(db);
-    const startMs = Date.now();
-    const syncState: SyncOutcomeInput = {
-      lastProgress: null,
-      thrown: undefined,
-    };
 
-    track("commons_sync_started", {
-      source_provider: source.provider,
+    await runManagedSync(db, source, embedConfig, controller, finish, {
       trigger: "manual",
+      onError: (err) => {
+        throw err;
+      },
     });
-
-    try {
-      const connector = await getConnectorForSource(db, source);
-
-      await syncSource(
-        db,
-        sourceId,
-        source.provider,
-        connector,
-        embedConfig,
-        (progress) => {
-          syncState.lastProgress = progress;
-          publishSyncProgress(progress);
-        },
-        controller.signal,
-      );
-    } catch (err) {
-      syncState.thrown = err;
-      throw err;
-    } finally {
-      // `finish` resolves the promise `cancelSync` is blocked on, so it has to
-      // run even if anything here throws — otherwise a cancel hangs for 15
-      // seconds. And the outcome has to be written before `finish`, or
-      // `sources:remove` could delete the row between the two.
-      try {
-        recordSyncOutcome(db, sourceId, syncState, controller.signal.aborted);
-        track("commons_sync_completed", {
-          source_provider: source.provider,
-          trigger: "manual",
-          duration_ms: Date.now() - startMs,
-          doc_count: syncState.lastProgress?.current ?? 0,
-          skipped_count: syncState.lastProgress?.skipped ?? 0,
-          error_count: syncState.lastProgress?.errors.length ?? 0,
-          phase: syncState.thrown !== undefined ? "error" : "done",
-          embedding_provider: embedConfig.provider,
-        });
-      } catch (err) {
-        // Best-effort bookkeeping. On quit, `will-quit` closes the database
-        // without waiting for the unwind, so this write lands on a closed
-        // connection — and an epilogue that throws would replace the sync's
-        // real result with an exception about recording it.
-        console.error(`Failed to record sync outcome for ${sourceId}:`, err);
-      } finally {
-        finish();
-        // The row's sync state just changed, however it ended. Tell every
-        // window to refetch rather than trusting them to have followed along.
-        broadcastSourcesChanged();
-      }
-    }
   });
 
   ipcMain.handle("sync:cancel", async (_, sourceId: string) => {
