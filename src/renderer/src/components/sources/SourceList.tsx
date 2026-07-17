@@ -142,12 +142,18 @@ export function SourceList({
 
   const startLocalSync = useCallback(
     (id: string) => {
-      if (startedLocallyRef.current.has(id)) return;
+      // The Sync button is already `disabled={isSyncing}`, but a click can
+      // still land after main (or a progress event) reports the source
+      // active and before that re-render commits. Guard against `syncingIds`
+      // as a whole, not just `startedLocallyRef` — a scheduler-started sync
+      // living only in `mainActive` must not mount a second, locally-owned
+      // panel destined to hit "Sync already in progress".
+      if (syncingIds.has(id)) return;
       startedLocallyRef.current.add(id);
       commitStartedLocally();
       setShownLocally((prev) => new Map(prev).set(id, ++nextGenRef.current));
     },
-    [commitStartedLocally],
+    [commitStartedLocally, syncingIds],
   );
 
   // A locally-owned sync reached a terminal status (F1/F9): free its queue
@@ -201,12 +207,41 @@ export function SourceList({
   // `sources:changed` is the authoritative "your view is stale" signal: refetch
   // the list (its per-source status just changed) and re-hydrate the active set
   // (a sync just started or ended).
+  //
+  // `sources:changed` only fires at sync *end* (sync-handlers.ts, scheduler.ts),
+  // so a scheduler-started sync on an already-focused Sources tab is otherwise
+  // invisible until it finishes. `sync:progress` is main's start-time signal —
+  // it broadcasts for every active sync, manual or scheduler-started — so a
+  // non-terminal event for a source not yet in `mainActive` adds it, and a
+  // terminal one (`done`/`error`) removes it; `sources:changed` still does the
+  // authoritative refetch a moment later. `setMainActive` bails out to the same
+  // `prev` reference when membership is unchanged, so a burst of progress
+  // events for a sync already tracked does not churn state or re-render.
   useEffect(() => {
-    const unsub = window.api.onSourcesChanged(() => {
+    const unsubSources = window.api.onSourcesChanged(() => {
       onRefreshRef.current();
       hydrateActive();
     });
-    return unsub;
+    const unsubProgress = window.api.onSyncProgress((progress) => {
+      const terminal = progress.phase === "done" || progress.phase === "error";
+      setMainActive((prev) => {
+        const has = prev.has(progress.sourceId);
+        if (terminal) {
+          if (!has) return prev;
+          const next = new Set(prev);
+          next.delete(progress.sourceId);
+          return next;
+        }
+        if (has) return prev;
+        const next = new Set(prev);
+        next.add(progress.sourceId);
+        return next;
+      });
+    });
+    return () => {
+      unsubSources();
+      unsubProgress();
+    };
   }, [hydrateActive]);
 
   const fetchDocs = useCallback(async (sourceId: string): Promise<void> => {
