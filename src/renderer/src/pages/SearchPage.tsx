@@ -40,6 +40,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   const queryRef = useRef(query);
   const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
+  const readinessIdRef = useRef(0);
 
   useEffect(() => {
     queryRef.current = query;
@@ -66,6 +67,11 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   // requires it to be reachable, matching App.tsx; it does not require an
   // embedding model to be pulled, same gap App.tsx has.
   const refreshReadiness = useCallback(() => {
+    // Same stale-response guard as the search-response check below: two
+    // in-flight checks can resolve out of order (add a key in Settings,
+    // switch back to Search quickly — the "before" check's slower promise
+    // must not clobber the "after" check's already-applied result).
+    const id = ++readinessIdRef.current;
     window.api
       .getEmbeddingProvider()
       .then(async (provider) => {
@@ -73,13 +79,23 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
           provider === "ollama"
             ? (await getOllamaStatus()).available
             : await window.api.hasSecret("cohere_api_key");
+        if (id !== readinessIdRef.current) return;
         setEmbeddingProvider(provider);
         providerReadyRef.current = isReady;
         setProviderReady(isReady);
       })
       .catch(() => {
-        // Transient IPC failure: leave the previous readiness state rather than
-        // flashing the disabled banner over a check unrelated to provider setup.
+        if (id !== readinessIdRef.current) return;
+        // Once a real state has ever been established, a later transient IPC
+        // failure leaves it alone — matches refreshHealth/refreshSources.
+        // But while still null (the very first check, which renders as
+        // "ready" per the comment above), failing open would leave the gate
+        // open forever on a rejected call. Fail closed instead, matching
+        // App.tsx's checkReady convention for its own initial check.
+        if (providerReadyRef.current === null) {
+          providerReadyRef.current = false;
+          setProviderReady(false);
+        }
       });
   }, []);
 

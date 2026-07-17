@@ -18,6 +18,13 @@ interface MockApiState {
   hasCohereKey: boolean;
   ollamaAvailable: boolean;
   searchResponse: SearchResponse;
+  /**
+   * Drives `listSources().length`, i.e. `sourceCount`. Defaults to 0, which
+   * renders the "no sources connected" text instead of `EmptyState` — tests
+   * that need `EmptyState`'s clickable suggested-question buttons on screen
+   * (to exercise the not-ready guard in `handleSearch`) must override this.
+   */
+  sourceCount: number;
 }
 
 const DEFAULT_HEALTH: EmbeddingHealth = {
@@ -42,13 +49,20 @@ function mockApi(overrides: Partial<MockApiState> = {}): {
     hasCohereKey: true,
     ollamaAvailable: false,
     searchResponse: { results: [], rerankFailed: false },
+    sourceCount: 0,
     ...overrides,
   };
   let listeners: Array<() => void> = [];
 
   window.api = {
     checkEmbeddingHealth: vi.fn(() => Promise.resolve(DEFAULT_HEALTH)),
-    listSources: vi.fn(() => Promise.resolve([])),
+    listSources: vi.fn(() =>
+      Promise.resolve(
+        // Only `.length` is read by SearchPage; the entries themselves are
+        // never inspected, so empty placeholder objects are sufficient.
+        Array.from({ length: state.sourceCount }, () => ({})),
+      ),
+    ),
     onSourcesChanged: vi.fn((cb: () => void) => {
       listeners.push(cb);
       return () => {
@@ -176,5 +190,70 @@ describe("SearchPage — provider readiness", () => {
     expect(
       await screen.findByLabelText("Search your documents"),
     ).not.toBeDisabled();
+  });
+
+  it("fails closed when the very first readiness check's IPC call rejects", async () => {
+    mockApi({ hasCohereKey: true });
+    // Overrides mockApi's default (resolves) — simulates the initial
+    // readiness check itself failing, while `providerReady` is still null
+    // (which otherwise renders as "ready" — see the null comment in
+    // SearchPage.tsx). Failing open here would leave the gate open forever.
+    window.api.getEmbeddingProvider = vi.fn(() =>
+      Promise.reject(new Error("IPC unavailable")),
+    );
+    render(<SearchPage visible={true} />);
+
+    expect(
+      await screen.findByText(
+        "Search is disabled — add your API key in Settings",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Search your documents")).toBeDisabled();
+  });
+
+  it("leaves a known-good readiness state alone on a later transient IPC failure", async () => {
+    mockApi({ hasCohereKey: true });
+    const { rerender } = render(<SearchPage visible={true} />);
+
+    // Establish a real (non-null) ready state first.
+    expect(
+      await screen.findByLabelText("Search your documents"),
+    ).not.toBeDisabled();
+
+    // A later check fails transiently — must not flip an already-established
+    // good state to disabled (unlike the first-check case above).
+    window.api.getEmbeddingProvider = vi.fn(() =>
+      Promise.reject(new Error("transient hiccup")),
+    );
+    rerender(<SearchPage visible={false} />);
+    rerender(<SearchPage visible={true} />);
+    await act(async () => {});
+
+    expect(screen.getByLabelText("Search your documents")).not.toBeDisabled();
+    expect(
+      screen.queryByText("Search is disabled — add your API key in Settings"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("blocks a suggested-question click while not ready, even though the input's disabled attribute does not cover it", async () => {
+    // sourceCount: 1 forces the `EmptyState` branch (sourceCount === 0 shows
+    // "no sources connected" text instead) — EmptyState's suggested-question
+    // buttons submit through `handleSearch` directly and are not wired to the
+    // input's `disabled` attribute, so this is the path the `handleSearch`
+    // guard exists to protect against.
+    mockApi({ hasCohereKey: false, sourceCount: 1 });
+    render(<SearchPage visible={true} />);
+
+    expect(
+      await screen.findByText(
+        "Search is disabled — add your API key in Settings",
+      ),
+    ).toBeInTheDocument();
+
+    const suggestion = await screen.findByText("How do I get reimbursed?");
+    fireEvent.click(suggestion);
+    await act(async () => {});
+
+    expect(window.api.search).not.toHaveBeenCalled();
   });
 });
