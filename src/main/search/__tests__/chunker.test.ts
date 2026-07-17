@@ -197,18 +197,31 @@ describe("chunkText", () => {
     ]);
   });
 
-  it("does not reclassify a realistic link-heavy section as oversized", () => {
-    // Regression for a review finding: an aggregate character floor (total
-    // non-space chars / 6) is NOT scoped to pathological runs — ordinary
-    // club content that is ~25% URLs/paths/filenames (meeting-notes links,
-    // Drive links, local file paths) can easily average >6 non-space chars
-    // per "word" without any single word being remotely pathological. That
-    // aggregate floor pushed a 300-word, exactly-at-the-limit section from
-    // wordEstimate 400 (1 chunk, matching pre-Task-11 behavior) to ~941
-    // (reclassified oversized, 3 chunks) — a boundary-stability violation.
-    // The floor is scoped per-word instead (LONG_WORD_CHARS in chunker.ts),
-    // so realistic URLs (tens to ~100 chars) never trigger it and this
-    // section's estimate is exactly the plain word-count estimate.
+  it("slices a realistic link-heavy section instead of pricing it as one oversized chunk", () => {
+    // History of this test, in order:
+    //
+    // Round 1 fix: an *aggregate* character floor (total non-space chars /
+    // 6 over the whole string) reclassified this exact 300-word section
+    // (25% URLs/paths/filenames) as oversized (~941 estimated tokens) even
+    // though word-count pricing alone put it at exactly 400 — a
+    // boundary-stability violation for ordinary link-heavy prose.
+    //
+    // Round 2 fix: scoped the floor to individual words >= 400 chars
+    // instead. That made this section correctly stay 1 chunk (no URL here
+    // reaches 400 chars) — but that pin was itself wrong: a single 4,875-char
+    // chunk is a real ~1,200-token payload by any actual tokenizer, ~3x
+    // MAX_TOKENS, which silently truncates or errors at embed time. Pinning
+    // "1 chunk, tokenCount 400" enshrined the same F6 defect through a
+    // different door — 400 was the word-*count* estimate, not a bound on
+    // the section's real size.
+    //
+    // Round 3 fix (current): words longer than LONG_WORD_CHARS (24 — above
+    // any natural-language word) are priced by character count at ~4
+    // chars/token. These URLs are 40-100+ chars, so they are now correctly
+    // priced by length instead of the flat ~1.33-token/word charge. The
+    // section's real estimate is 1920, well over MAX_TOKENS, and it is
+    // correctly sliced into several bounded chunks instead of landing in
+    // one oversized chunk.
     const filler = [
       "the",
       "club",
@@ -258,14 +271,68 @@ describe("chunkText", () => {
     }
     const text = words.join(" ");
 
-    // wordEstimate = ceil(300 / 0.75) = 400 — exactly at MAX_TOKENS, the
-    // pre-Task-11 boundary condition (<=, so still a single chunk).
-    expect(estimateTokens(text)).toBe(400);
+    // The plain word-count estimate alone would be exactly 400 (300 words /
+    // 0.75) — the number that made the old pin look "safe." The real,
+    // length-aware estimate is 1920: nearly 5x higher, because 75 of these
+    // 300 "words" are 40-100+ char URLs priced by length, not by count.
+    expect(estimateTokens(text)).toBe(1920);
 
     const chunks = chunkText(text, "Link Heavy");
 
-    expect(chunks).toEqual([
-      { index: 0, heading: null, text, tokenCount: 400 },
-    ]);
+    expect(chunks.length).toBe(6);
+    for (const chunk of chunks) {
+      expect(chunk.tokenCount).toBeLessThanOrEqual(400); // MAX_TOKENS
+      expect(chunk.text.length).toBeLessThanOrEqual(400 * 8);
+      expect(chunk.tokenCount).toBe(estimateTokens(chunk.text));
+    }
+  });
+
+  it("bounds a space-separated list of UUIDs instead of pricing it as ~2 tokens/word", () => {
+    // Regression for a review finding: a per-word floor keyed only to
+    // extremely long words (>= a few hundred chars) misses ordinary
+    // documents whose *aggregate* volume of moderately-long tokens is the
+    // real problem — 300 space-separated UUIDs (a pasted export) are 36
+    // chars each, individually nowhere near pathological, but their real
+    // token cost is far above what word-count pricing (~1.33 tokens/word)
+    // reports. Before this fix that priced as estimate 400 → a single
+    // ~11,100-char chunk (~7x the real token budget) — the original F6
+    // defect through a different door.
+    const hex = (n: number, len: number): string =>
+      n.toString(16).padStart(len, "0").slice(0, len);
+    const uuid = (i: number): string =>
+      `${hex(i, 8)}-${hex(i * 7, 4)}-${hex(i * 13, 4)}-${hex(i * 17, 4)}-${hex(i * 19, 12)}`;
+    const words = Array.from({ length: 300 }, (_, i) => uuid(i));
+    expect(words.every((w) => w.length === 36)).toBe(true);
+    const text = words.join(" ");
+
+    const chunks = chunkText(text, "UUID Export");
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.text.length).toBeLessThanOrEqual(400 * 8);
+      expect(chunk.tokenCount).toBeLessThanOrEqual(450);
+      // Internal consistency: the reported tokenCount matches what
+      // estimateTokens computes for that exact chunk text.
+      expect(chunk.tokenCount).toBe(estimateTokens(chunk.text));
+    }
+  });
+
+  it("bounds a run of long fixed-length hashes the same way", () => {
+    // Second pathological-aggregate case at a different word length (200
+    // chars, well past a UUID but still far short of the codepoint-slicer's
+    // per-word threshold) — same underlying bug, different shape.
+    const hash = (i: number): string =>
+      (i.toString(16) + "0".repeat(200)).slice(0, 200);
+    const words = Array.from({ length: 250 }, (_, i) => hash(i));
+    expect(words.every((w) => w.length === 200)).toBe(true);
+    const text = words.join(" ");
+
+    const chunks = chunkText(text, "Hash List");
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.text.length).toBeLessThanOrEqual(400 * 8);
+      expect(chunk.tokenCount).toBe(estimateTokens(chunk.text));
+    }
   });
 });

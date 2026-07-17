@@ -16,16 +16,16 @@ const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 const CJK_CHAR =
   /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/g;
 
-// No natural-language word, and no realistic URL/path/filename, reaches this
-// length. Only a spaceless pathological run (a base64 data URI, a minified
-// bundle, a long hash) does — the word-count heuristic prices anything
-// spaceless as a single "word" worth ~2 tokens regardless of length, so
-// without this floor such a run never registers as oversized. Scoping the
-// floor to individual words past this threshold — rather than to the
-// aggregate character count of the whole string — keeps it from firing on
-// ordinary link-heavy prose, where 25%+ of "words" can be 40-100 char URLs
-// without the text itself being pathological.
-const LONG_WORD_CHARS = 400;
+// Any word longer than this is priced by character count instead of by the
+// ~1.33-tokens/word count heuristic. 24 sits comfortably above the longest
+// word in any natural-English test fixture (scanned max: 9 chars) and above
+// any realistic natural-language word, but well below a UUID (36 chars), a
+// file hash, or a URL — so short words stay cheaply and accurately priced
+// by count, while long tokens (individually unremarkable, but whose
+// *aggregate* volume a word-count-only estimate would silently miss — e.g.
+// a pasted export of hundreds of UUIDs) are priced by length instead of
+// disappearing into a flat ~1.33-token charge each.
+const LONG_WORD_CHARS = 24;
 
 export function estimateTokens(text: string): number {
   const cjkChars = (text.match(CJK_CHAR) ?? []).length;
@@ -37,18 +37,19 @@ export function estimateTokens(text: string): number {
   // overcount) for astral-plane characters, which is the safe direction for
   // a floor whose purpose is to avoid under-pricing.
   const words = stripped.split(/\s+/).filter(Boolean);
-  const wordEstimate = Math.ceil(words.length / 0.75);
-  let longWordExtra = 0;
+  let shortWordCount = 0;
+  let longWordChars = 0;
   for (const word of words) {
-    // >= (not >): sliceByTokens windows are exactly MAX_TOKENS characters,
-    // which numerically equals LONG_WORD_CHARS — a slice re-evaluated by this
-    // function must still floor its own estimate rather than reporting the
-    // ~2-token baseline for what is still a spaceless pathological piece.
-    if (word.length >= LONG_WORD_CHARS) {
-      longWordExtra += Math.ceil(word.length / 6);
+    if (word.length > LONG_WORD_CHARS) {
+      // Worst-case ~4 chars/token: real BPE tokenizers run close to this for
+      // high-entropy non-language text (hex, base64, UUIDs) that has few or
+      // no learned merges, unlike natural prose's ~4-5 chars/token average.
+      longWordChars += Math.ceil(word.length / 4);
+    } else {
+      shortWordCount++;
     }
   }
-  return wordEstimate + cjkChars + longWordExtra;
+  return Math.ceil(shortWordCount / 0.75) + cjkChars + longWordChars;
 }
 
 /** Slice a spaceless run into codepoint groups each ≈ maxTokens tokens. */
