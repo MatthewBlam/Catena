@@ -16,7 +16,7 @@ import { Spinner } from "@renderer/components/ui/spinner";
 import { VirtualList } from "@renderer/components/ui/VirtualList";
 import type { SourceWithCount, Document } from "../../../../shared/types";
 import { providerLabel } from "@renderer/lib/format";
-import { cn } from "@renderer/lib/utils";
+import { cn, debounce } from "@renderer/lib/utils";
 
 interface SourceListProps {
   sources: SourceWithCount[];
@@ -217,11 +217,19 @@ export function SourceList({
   // authoritative refetch a moment later. `setMainActive` bails out to the same
   // `prev` reference when membership is unchanged, so a burst of progress
   // events for a sync already tracked does not churn state or re-render.
+  //
+  // F11: `sources:changed` fires once per source completion, so a large
+  // "Sync all" run can fire it in a tight burst — each occurrence re-runs the
+  // `getAllSourcesWithCounts` join and re-hydrates the active set. That is
+  // debounced (trailing, so the last event in a burst still refetches); the
+  // `sync:progress` membership updates below are the prompt active-sync
+  // indication (Task 3) and stay un-debounced.
   useEffect(() => {
-    const unsubSources = window.api.onSourcesChanged(() => {
+    const debouncedSourcesChanged = debounce(() => {
       onRefreshRef.current();
       hydrateActive();
-    });
+    }, 250);
+    const unsubSources = window.api.onSourcesChanged(debouncedSourcesChanged);
     const unsubProgress = window.api.onSyncProgress((progress) => {
       const terminal = progress.phase === "done" || progress.phase === "error";
       setMainActive((prev) => {
@@ -239,6 +247,7 @@ export function SourceList({
       });
     });
     return () => {
+      debouncedSourcesChanged.cancel();
       unsubSources();
       unsubProgress();
     };

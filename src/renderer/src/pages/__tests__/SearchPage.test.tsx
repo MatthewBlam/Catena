@@ -6,6 +6,7 @@ import {
   fireEvent,
   act,
   cleanup,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { SearchPage } from "../SearchPage";
@@ -187,9 +188,12 @@ describe("SearchPage — provider readiness", () => {
     state.hasCohereKey = true;
     fireSourcesChanged();
 
-    expect(
-      await screen.findByLabelText("Search your documents"),
-    ).not.toBeDisabled();
+    // F11: the sources:changed handler is now debounced (~250ms), so the
+    // refetch it triggers no longer lands within the same microtask flush a
+    // bare `findBy*` relies on — poll for the settled state instead.
+    await waitFor(() => {
+      expect(screen.getByLabelText("Search your documents")).not.toBeDisabled();
+    });
   });
 
   it("fails closed when the very first readiness check's IPC call rejects", async () => {
@@ -255,5 +259,46 @@ describe("SearchPage — provider readiness", () => {
     await act(async () => {});
 
     expect(window.api.search).not.toHaveBeenCalled();
+  });
+});
+
+describe("SearchPage — sources:changed debounce (F11)", () => {
+  it("collapses a burst of sources:changed events into a single refetch", async () => {
+    const { fireSourcesChanged } = mockApi({ hasCohereKey: true });
+    render(<SearchPage visible={true} />);
+    await screen.findByLabelText("Search your documents");
+
+    const healthCallsBefore = (
+      window.api.checkEmbeddingHealth as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    const sourcesCallsBefore = (
+      window.api.listSources as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+
+    vi.useFakeTimers();
+    try {
+      // Simulates a large sync completing many sources in a tight burst —
+      // each completion fires `sources:changed` once.
+      fireSourcesChanged();
+      fireSourcesChanged();
+      fireSourcesChanged();
+
+      expect(window.api.checkEmbeddingHealth).toHaveBeenCalledTimes(
+        healthCallsBefore,
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+
+      expect(window.api.checkEmbeddingHealth).toHaveBeenCalledTimes(
+        healthCallsBefore + 1,
+      );
+      expect(window.api.listSources).toHaveBeenCalledTimes(
+        sourcesCallsBefore + 1,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

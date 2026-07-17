@@ -4,6 +4,7 @@ import { ResultCard } from "@renderer/components/search/ResultCard";
 import { EmptyState } from "@renderer/components/search/EmptyState";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { getOllamaStatus } from "@renderer/lib/ollama";
+import { debounce } from "@renderer/lib/utils";
 import type { SearchResult, EmbeddingHealth } from "../../../shared/types";
 
 interface SearchPageProps {
@@ -115,12 +116,23 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
 
   // And after any sync/source change: a re-embed can clear a mismatch (or create
   // one), and adding/removing sources changes the empty-state.
+  //
+  // F11: `sources:changed` fires once per source completion, so a large sync
+  // run fires it in a tight burst — each occurrence re-runs the embedding-health
+  // COUNT queries and the source list fetch. Debounced (trailing) so the last
+  // event in a burst still refetches; `refreshReadiness`'s own sequence guard
+  // (Task 6) is unaffected by debouncing the caller.
   useEffect(() => {
-    return window.api.onSourcesChanged(() => {
+    const debouncedSourcesChanged = debounce(() => {
       refreshHealth();
       refreshSources();
       refreshReadiness();
-    });
+    }, 250);
+    const unsub = window.api.onSourcesChanged(debouncedSourcesChanged);
+    return () => {
+      debouncedSourcesChanged.cancel();
+      unsub();
+    };
   }, [refreshHealth, refreshSources, refreshReadiness]);
 
   // Unmounting leaves any in-flight search with no consumer — but it is still

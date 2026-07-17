@@ -4,6 +4,7 @@ import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { Switch } from "@renderer/components/ui/switch";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { debounce } from "@renderer/lib/utils";
 import type { StorageStats } from "../../../shared/types";
 
 interface SettingsPageProps {
@@ -57,6 +58,11 @@ export function SettingsPage({
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevVisibleRef = useRef(false);
+  // Separate from `prevVisibleRef` above: that ref is updated inside the
+  // `refresh()` effect, which runs (and mutates it) before this effect on the
+  // same render, so sharing it would make the "just became visible" check
+  // below always see the already-updated value. Own ref, own transition.
+  const prevSyncVisibleRef = useRef(false);
 
   // Every reader of settings state in one place, so anything that changes it —
   // becoming visible, clearing all data — can put the UI back in sync with a
@@ -100,9 +106,20 @@ export function SettingsPage({
   // reading "Syncing now…" forever. Refetch the scheduler's live state whenever a
   // sync makes progress or the source list changes. Only the sync-status fields
   // are touched — the user-controlled enabled/interval must not be clobbered by a
-  // progress event mid-toggle.
+  // progress event mid-toggle. This split from `refresh()` above is deliberate
+  // and must stay that way: `refresh()` overwrites every field from a single
+  // snapshot, so folding it in here would let a progress event mid-toggle
+  // clobber `autoSyncEnabled`/`autoSyncInterval` with a stale read.
+  //
+  // F11: `sync:progress` fires ~4 times per document, so a large sync is a
+  // `getAutoSync()` IPC round-trip per progress event. Debounced (trailing, so
+  // the terminal event still lands) and skipped entirely while the page is not
+  // visible — nothing on screen depends on this state when the tab is not
+  // showing. Becoming visible re-syncs once, immediately, so switching back
+  // mid-sync (or right after one settles) does not wait out a stale debounce
+  // window for state that was never refetched while hidden.
   useEffect(() => {
-    const refetchSyncState = (): void => {
+    const doRefetch = (): void => {
       window.api
         .getAutoSync()
         .then((sync) => {
@@ -111,13 +128,24 @@ export function SettingsPage({
         })
         .catch(() => {});
     };
+    const debouncedRefetch = debounce(doRefetch, 300);
+    const refetchSyncState = (): void => {
+      if (visible) debouncedRefetch();
+    };
     const unsubProgress = window.api.onSyncProgress(refetchSyncState);
     const unsubSources = window.api.onSourcesChanged(refetchSyncState);
+
+    if (visible && !prevSyncVisibleRef.current) {
+      doRefetch();
+    }
+    prevSyncVisibleRef.current = visible;
+
     return () => {
+      debouncedRefetch.cancel();
       unsubProgress();
       unsubSources();
     };
-  }, []);
+  }, [visible]);
 
   useEffect(() => {
     return () => {

@@ -52,9 +52,14 @@ function makeProgress(overrides: Partial<SyncProgress> = {}): SyncProgress {
  * `onSyncProgress` fans out to every subscriber — both SourceList's own
  * subscription and any mounted SyncPanel's — via `fireProgress`, the same
  * "capture the callback" idiom used to simulate main pushing an event.
+ * `fireSourcesChanged` does the same for `sources:changed`.
  */
-function mockApi(): { fireProgress: (p: SyncProgress) => void } {
-  let listeners: Array<(p: SyncProgress) => void> = [];
+function mockApi(): {
+  fireProgress: (p: SyncProgress) => void;
+  fireSourcesChanged: () => void;
+} {
+  let progressListeners: Array<(p: SyncProgress) => void> = [];
+  let sourcesListeners: Array<() => void> = [];
   window.api = {
     getActiveSyncs: vi.fn(() =>
       Promise.resolve({
@@ -67,11 +72,16 @@ function mockApi(): { fireProgress: (p: SyncProgress) => void } {
         },
       }),
     ),
-    onSourcesChanged: vi.fn(() => () => {}),
-    onSyncProgress: vi.fn((cb: (p: SyncProgress) => void) => {
-      listeners.push(cb);
+    onSourcesChanged: vi.fn((cb: () => void) => {
+      sourcesListeners.push(cb);
       return () => {
-        listeners = listeners.filter((l) => l !== cb);
+        sourcesListeners = sourcesListeners.filter((l) => l !== cb);
+      };
+    }),
+    onSyncProgress: vi.fn((cb: (p: SyncProgress) => void) => {
+      progressListeners.push(cb);
+      return () => {
+        progressListeners = progressListeners.filter((l) => l !== cb);
       };
     }),
     listDocumentsBySource: vi.fn(() => Promise.resolve([])),
@@ -84,7 +94,12 @@ function mockApi(): { fireProgress: (p: SyncProgress) => void } {
   return {
     fireProgress: (p) => {
       act(() => {
-        for (const listener of listeners) listener(p);
+        for (const listener of progressListeners) listener(p);
+      });
+    },
+    fireSourcesChanged: () => {
+      act(() => {
+        for (const listener of sourcesListeners) listener();
       });
     },
   };
@@ -133,5 +148,61 @@ describe("SourceList — scheduler-started syncs", () => {
 
     expect(window.api.syncSource).not.toHaveBeenCalled();
     expect(screen.getAllByText("Syncing Source One")).toHaveLength(1);
+  });
+});
+
+describe("SourceList — sources:changed debounce (F11)", () => {
+  it("collapses a burst of sources:changed events into a single refetch", async () => {
+    const onRefresh = vi.fn();
+    const { fireSourcesChanged } = mockApi();
+    render(<SourceList sources={[makeSource()]} onRefresh={onRefresh} />);
+    await screen.findByText("Source One");
+    onRefresh.mockClear();
+    (window.api.getActiveSyncs as ReturnType<typeof vi.fn>).mockClear();
+
+    vi.useFakeTimers();
+    try {
+      // Simulates "Sync all" completing N sources in a tight burst — each
+      // completion fires `sources:changed` once.
+      fireSourcesChanged();
+      fireSourcesChanged();
+      fireSourcesChanged();
+
+      // Nothing has fired yet — still within the debounce window.
+      expect(onRefresh).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(window.api.getActiveSyncs).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending debounced refetch on unmount", async () => {
+    const onRefresh = vi.fn();
+    const { fireSourcesChanged } = mockApi();
+    const { unmount } = render(
+      <SourceList sources={[makeSource()]} onRefresh={onRefresh} />,
+    );
+    await screen.findByText("Source One");
+    onRefresh.mockClear();
+
+    vi.useFakeTimers();
+    try {
+      fireSourcesChanged();
+      unmount();
+
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+
+      expect(onRefresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
