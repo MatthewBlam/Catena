@@ -48,10 +48,13 @@ const LONG_WORD_CHARS = 24;
 //      paragraph-identity and link-heavy pins and the full pre-Task-11
 //      suite.
 //   Accepted residual (coordinator-adjudicated, not fixed further): content
-//   whose short-bucket average word length sits *inside* the 8-10.67 char
-//   band, with real per-token entropy above the 8-chars/token assumption
-//   (e.g. dense abbreviation-like tokens ~9-10 chars each), can still
-//   under-price by up to ~2x — the structural worst case for any
+//   whose short-bucket average word length sits at or above the 10.67-char
+//   crossover, with real per-token entropy above the 8-chars/token
+//   assumption (e.g. dense abbreviation-like tokens ~9-10 chars each), can
+//   still under-price — the floor's ratio to a ~4-chars/token reality ramps
+//   from ~1.5x at 8 chars/word up to 2x at the 10.67-char crossover, then
+//   plateaus at exactly 2x across the rest of the 10.67-24 char average
+//   range (floor L/8 vs. real ~L/4) — the structural worst case for any
 //   count-vs-floor scheme at this crossover. Closing that fully would
 //   require repricing ordinary prose, which the pre-Task-11
 //   boundary-stability constraint forbids.

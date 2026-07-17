@@ -6,6 +6,7 @@ import {
   fireEvent,
   act,
   cleanup,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { SourceList } from "../SourceList";
@@ -53,13 +54,20 @@ function makeProgress(overrides: Partial<SyncProgress> = {}): SyncProgress {
  * subscription and any mounted SyncPanel's — via `fireProgress`, the same
  * "capture the callback" idiom used to simulate main pushing an event.
  * `fireSourcesChanged` does the same for `sources:changed`.
+ *
+ * `syncSource` is deferred per source id rather than left permanently
+ * pending: a mounted SyncPanel's `autoStart` effect calls it and hangs until
+ * `resolveSyncSource(id)` releases that specific call, so a test can hold a
+ * sync "in flight" and free its queue slot at a chosen moment (Finding 1).
  */
 function mockApi(): {
   fireProgress: (p: SyncProgress) => void;
   fireSourcesChanged: () => void;
+  resolveSyncSource: (sourceId: string) => Promise<void>;
 } {
   let progressListeners: Array<(p: SyncProgress) => void> = [];
   let sourcesListeners: Array<() => void> = [];
+  const syncResolvers = new Map<string, () => void>();
   window.api = {
     getActiveSyncs: vi.fn(() =>
       Promise.resolve({
@@ -87,7 +95,12 @@ function mockApi(): {
     listDocumentsBySource: vi.fn(() => Promise.resolve([])),
     removeSource: vi.fn(() => Promise.resolve()),
     openExternal: vi.fn(() => Promise.resolve()),
-    syncSource: vi.fn(() => new Promise(() => {})),
+    syncSource: vi.fn(
+      (sourceId: string) =>
+        new Promise<void>((resolve) => {
+          syncResolvers.set(sourceId, resolve);
+        }),
+    ),
     cancelSync: vi.fn(() => Promise.resolve()),
   } as unknown as typeof window.api;
 
@@ -101,6 +114,10 @@ function mockApi(): {
       act(() => {
         for (const listener of sourcesListeners) listener();
       });
+    },
+    resolveSyncSource: async (sourceId) => {
+      syncResolvers.get(sourceId)?.();
+      await act(async () => {});
     },
   };
 }
@@ -204,5 +221,88 @@ describe("SourceList — sources:changed debounce (F11)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("SourceList — Sync-all queue coherence (Finding 1)", () => {
+  function threeSources(): SourceWithCount[] {
+    return [
+      makeSource({ id: "s1", name: "Source One" }),
+      makeSource({ id: "s2", name: "Source Two" }),
+      makeSource({ id: "s3", name: "Source Three" }),
+    ];
+  }
+
+  it("does not re-start a still-queued source that main claims mid-drain", async () => {
+    const { fireProgress, resolveSyncSource } = mockApi();
+    render(<SourceList sources={threeSources()} onRefresh={vi.fn()} />);
+    await screen.findByText("Source One");
+
+    // Sync-all at concurrency 2: s1 and s2 start immediately, s3 queues.
+    fireEvent.click(screen.getByRole("button", { name: "Sync all" }));
+
+    expect(window.api.syncSource).toHaveBeenCalledTimes(2);
+    expect(window.api.syncSource).toHaveBeenCalledWith("s1");
+    expect(window.api.syncSource).toHaveBeenCalledWith("s2");
+    expect(window.api.syncSource).not.toHaveBeenCalledWith("s3");
+
+    // Main claims the still-queued s3 mid-drain — e.g. the scheduler beat
+    // the queue to it, or another window started it.
+    fireProgress(makeProgress({ sourceId: "s3", phase: "fetching" }));
+    expect(screen.getByText("Syncing Source Three")).toBeInTheDocument();
+
+    // A slot frees: s1's sync completes.
+    await resolveSyncSource("s1");
+    await screen.findByText("Sync complete");
+
+    // The freed slot must not be handed to s3 — it's already syncing under
+    // main's ownership. Before the fix, `pumpQueue` spliced ids off the
+    // queue without checking `mainActiveRef`, so it would hand s3 a new
+    // local generation and remount its panel with a fresh `autoStart` that
+    // re-called `syncSource` while main's own sync was still in flight —
+    // producing a spurious "Sync already in progress" error panel.
+    expect(window.api.syncSource).toHaveBeenCalledTimes(2);
+    expect(window.api.syncSource).not.toHaveBeenCalledWith("s3");
+    // Still the single, main-owned panel — not a second, locally-started one.
+    expect(screen.getAllByText("Syncing Source Three")).toHaveLength(1);
+  });
+
+  it("dequeues a source when the user starts it manually before its turn", async () => {
+    const { resolveSyncSource } = mockApi();
+    render(<SourceList sources={threeSources()} onRefresh={vi.fn()} />);
+    await screen.findByText("Source One");
+
+    // Sync-all at concurrency 2: s1 and s2 start immediately, s3 queues.
+    fireEvent.click(screen.getByRole("button", { name: "Sync all" }));
+    expect(window.api.syncSource).toHaveBeenCalledTimes(2);
+
+    // The user clicks s3's own Sync button while it is still waiting in the
+    // queue.
+    const syncButtons = screen.getAllByTitle("Sync");
+    fireEvent.click(syncButtons[2]);
+
+    expect(window.api.syncSource).toHaveBeenCalledTimes(3);
+    expect(window.api.syncSource).toHaveBeenCalledWith("s3");
+
+    // s3 itself finishes first: `releaseSlot` drops it out of
+    // `startedLocallyRef`, so from here on `pumpQueue`'s own
+    // already-syncing filter can no longer protect it — only having been
+    // dequeued from `queueRef` up front (in `startLocalSync`) can.
+    await resolveSyncSource("s3");
+    await screen.findByText("Sync complete");
+
+    // A second slot frees. If `startLocalSync` had not dequeued s3 from
+    // `queueRef` when the user clicked it, this stale entry would still be
+    // sitting in the queue — no longer shielded by `startedLocallyRef` now
+    // that s3 has already settled — and `pumpQueue` would start it again.
+    await resolveSyncSource("s1");
+    await waitFor(() => {
+      expect(screen.getAllByText("Sync complete")).toHaveLength(2);
+    });
+
+    const s3Calls = (
+      window.api.syncSource as ReturnType<typeof vi.fn>
+    ).mock.calls.filter(([id]) => id === "s3");
+    expect(s3Calls).toHaveLength(1);
   });
 });

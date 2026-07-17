@@ -403,8 +403,12 @@ export function registerSyncHandlers(): void {
       throw new Error(`Sync already in progress for source: ${sourceId}`);
     }
 
-    const { controller, finish } = registerSync(sourceId);
+    // Build the embed config before registering the sync: `buildEmbedConfig`
+    // calls `loadSecret`, which throws if the OS keychain is unavailable. If
+    // `registerSync` ran first, that throw would leave the source wedged in
+    // `activeSyncs` forever — `finish()` is only reachable after this point.
     const embedConfig = buildEmbedConfig(db);
+    const { controller, finish } = registerSync(sourceId);
 
     await runManagedSync(db, source, embedConfig, controller, finish, {
       trigger: "manual",

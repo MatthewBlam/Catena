@@ -79,6 +79,12 @@ export function SourceList({
   //    SyncPanel (and a fresh `syncSource` call) if the same source is
   //    started again before its old, still-showing panel is dismissed.
   const [mainActive, setMainActive] = useState<Set<string>>(new Set());
+  // Synchronous mirror of `mainActive`, for the same reason
+  // `startedLocallyRef` mirrors `startedLocally`: `pumpQueue` needs to see a
+  // sync main just claimed (via a progress event or a fresh hydrate) the
+  // instant it happens, not after the next render commits `mainActive`.
+  // Kept in sync everywhere `mainActive` changes, via `commitMainActive`.
+  const mainActiveRef = useRef<Set<string>>(new Set());
   const [startedLocally, setStartedLocally] = useState<Set<string>>(new Set());
   const startedLocallyRef = useRef<Set<string>>(new Set());
   const [shownLocally, setShownLocally] = useState<Map<string, number>>(
@@ -112,6 +118,15 @@ export function SourceList({
     setStartedLocally(new Set(startedLocallyRef.current));
   }, []);
 
+  // Applies a new main-active set to both React state (for rendering) and
+  // `mainActiveRef` (the synchronous mirror `pumpQueue` reads). The ref write
+  // happens synchronously, right here — not inside a `setMainActive` updater,
+  // which React may defer past the point `pumpQueue` needs the fresh value.
+  const commitMainActive = useCallback((next: Set<string>) => {
+    mainActiveRef.current = next;
+    setMainActive(next);
+  }, []);
+
   // Pull main's active-sync set. This is authoritative for syncs main owns; a
   // sync we started locally that main has not registered yet stays visible
   // because it also lives in `startedLocally`. A failed hydrate is swallowed —
@@ -120,14 +135,24 @@ export function SourceList({
     window.api
       .getActiveSyncs()
       .then(({ active }) =>
-        setMainActive(new Set(active.map((a) => a.sourceId))),
+        commitMainActive(new Set(active.map((a) => a.sourceId))),
       )
       .catch(() => {});
-  }, []);
+  }, [commitMainActive]);
 
   // Start as many queued Sync-all sources as there are free slots. Reads the
   // ref, not state, so a single pump can fill both slots at once.
   const pumpQueue = useCallback(() => {
+    // Drop queued ids that are already syncing — started locally since being
+    // queued (a click on a still-queued source's Sync button — see
+    // `startLocalSync`) or claimed by main mid-drain (the scheduler beat the
+    // queue to it). Otherwise a freed slot would hand the id a new
+    // generation here, remounting its panel with a fresh `autoStart` that
+    // re-calls `syncSource` while the first call is still in flight.
+    queueRef.current = queueRef.current.filter(
+      (id) =>
+        !startedLocallyRef.current.has(id) && !mainActiveRef.current.has(id),
+    );
     const slots = SYNC_ALL_CONCURRENCY - startedLocallyRef.current.size;
     if (slots <= 0 || queueRef.current.length === 0) return;
     const toStart = queueRef.current.splice(0, slots);
@@ -149,6 +174,10 @@ export function SourceList({
       // living only in `mainActive` must not mount a second, locally-owned
       // panel destined to hit "Sync already in progress".
       if (syncingIds.has(id)) return;
+      // The id may still be sitting in the Sync-all queue (clicked before its
+      // turn came up) — starting it here takes over that slot, so drop it
+      // from the queue or `pumpQueue` would start it again later.
+      queueRef.current = queueRef.current.filter((q) => q !== id);
       startedLocallyRef.current.add(id);
       commitStartedLocally();
       setShownLocally((prev) => new Map(prev).set(id, ++nextGenRef.current));
@@ -181,16 +210,15 @@ export function SourceList({
         next.delete(id);
         return next;
       });
-      setMainActive((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
+      if (mainActiveRef.current.has(id)) {
+        const next = new Set(mainActiveRef.current);
         next.delete(id);
-        return next;
-      });
+        commitMainActive(next);
+      }
       queueRef.current = queueRef.current.filter((q) => q !== id);
       pumpQueue();
     },
-    [commitStartedLocally, pumpQueue],
+    [commitStartedLocally, commitMainActive, pumpQueue],
   );
 
   useEffect(() => {
@@ -214,9 +242,10 @@ export function SourceList({
   // it broadcasts for every active sync, manual or scheduler-started — so a
   // non-terminal event for a source not yet in `mainActive` adds it, and a
   // terminal one (`done`/`error`) removes it; `sources:changed` still does the
-  // authoritative refetch a moment later. `setMainActive` bails out to the same
-  // `prev` reference when membership is unchanged, so a burst of progress
-  // events for a sync already tracked does not churn state or re-render.
+  // authoritative refetch a moment later. This bails out (skips
+  // `commitMainActive` entirely) when membership is unchanged, so a burst of
+  // progress events for a sync already tracked does not churn state or
+  // re-render.
   //
   // F11: `sources:changed` fires once per source completion, so a large
   // "Sync all" run can fire it in a tight burst — each occurrence re-runs the
@@ -232,26 +261,25 @@ export function SourceList({
     const unsubSources = window.api.onSourcesChanged(debouncedSourcesChanged);
     const unsubProgress = window.api.onSyncProgress((progress) => {
       const terminal = progress.phase === "done" || progress.phase === "error";
-      setMainActive((prev) => {
-        const has = prev.has(progress.sourceId);
-        if (terminal) {
-          if (!has) return prev;
-          const next = new Set(prev);
-          next.delete(progress.sourceId);
-          return next;
-        }
-        if (has) return prev;
-        const next = new Set(prev);
+      const has = mainActiveRef.current.has(progress.sourceId);
+      if (terminal) {
+        if (!has) return;
+        const next = new Set(mainActiveRef.current);
+        next.delete(progress.sourceId);
+        commitMainActive(next);
+      } else {
+        if (has) return;
+        const next = new Set(mainActiveRef.current);
         next.add(progress.sourceId);
-        return next;
-      });
+        commitMainActive(next);
+      }
     });
     return () => {
       debouncedSourcesChanged.cancel();
       unsubSources();
       unsubProgress();
     };
-  }, [hydrateActive]);
+  }, [hydrateActive, commitMainActive]);
 
   const fetchDocs = useCallback(async (sourceId: string): Promise<void> => {
     setLoadingDocIds((prev) => new Set(prev).add(sourceId));
