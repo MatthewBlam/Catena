@@ -157,4 +157,43 @@ describe("chunkText", () => {
       expect(chunk.tokenCount).toBeLessThanOrEqual(400); // MAX_TOKENS
     }
   });
+
+  it("slices an oversized spaceless non-CJK run instead of emitting one defective chunk", () => {
+    // A 100KB base64-like blob (a data URI, minified bundle, or long hash) has
+    // no whitespace for the word-count heuristic to key off. Before the fix it
+    // priced as a single "word" (~2 tokens) regardless of length and landed in
+    // one oversized chunk, which the embedding provider then silently
+    // truncates or rejects — no downstream length guard exists.
+    const alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const blob = Array.from(
+      { length: 100_000 },
+      (_, i) => alphabet[i % alphabet.length],
+    ).join("");
+
+    const chunks = chunkText(blob, "Blob Doc");
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      // MAX_TOKENS (400) * 8 chars/token is a safe upper bound regardless of
+      // the actual chars-per-token ratio used internally.
+      expect(chunk.text.length).toBeLessThanOrEqual(400 * 8);
+      expect(chunk.tokenCount).toBeGreaterThan(2);
+    }
+  });
+
+  it("does not move normal-text chunk boundaries when the char floor is added", () => {
+    // Pinned output captured from the pre-fix chunker. The char-based floor
+    // introduced for pathological spaceless runs must be a no-op for ordinary
+    // multi-word English — this is the boundary-stability guarantee the fix
+    // is scoped to preserve.
+    const text =
+      "The quick brown fox jumps over the lazy dog. It was a bright cold day in April, and the clocks were striking thirteen. Commons is a local-first search tool built for student club archives, indexing agendas, meeting notes, and shared documents so members can find what they need without hunting through a dozen different tools. Every chunk produced by the chunker should stay well under the token ceiling so downstream embedding calls never truncate silently.";
+
+    const chunks = chunkText(text, "Normal Doc");
+
+    expect(chunks).toEqual([
+      { index: 0, heading: null, text, tokenCount: 100 },
+    ]);
+  });
 });

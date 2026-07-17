@@ -21,8 +21,19 @@ export function estimateTokens(text: string): number {
   // Strip the CJK codepoints before the whitespace heuristic so a mixed
   // "Latin 中文" string counts both halves, then add the CJK codepoints back at
   // ~1 token each. Pure-Latin text is unchanged — there is nothing to strip.
-  const words = text.replace(CJK_CHAR, " ").split(/\s+/).filter(Boolean).length;
-  return Math.ceil(words / 0.75) + cjkChars;
+  const stripped = text.replace(CJK_CHAR, " ");
+  const words = stripped.split(/\s+/).filter(Boolean).length;
+  const wordEstimate = Math.ceil(words / 0.75);
+  // The word-count heuristic prices any spaceless run — a base64 data URI, a
+  // minified bundle, a long URL/hash — as a single "word" worth ~2 tokens
+  // regardless of length, so it never registers as oversized. Floor the
+  // estimate at a conservative 6 chars/token (English text averages ~4-5)
+  // over the non-whitespace character count. For normal multi-word text this
+  // floor sits well below the word-count estimate and never wins — it only
+  // bites when a run has no whitespace to divide it into "words" at all.
+  const nonSpaceChars = stripped.replace(/\s+/g, "").length;
+  const charFloor = Math.ceil(nonSpaceChars / 6);
+  return Math.max(wordEstimate, charFloor) + cjkChars;
 }
 
 /** Slice a spaceless run into codepoint groups each ≈ maxTokens tokens. */
