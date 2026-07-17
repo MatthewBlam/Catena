@@ -16,24 +16,39 @@ const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 const CJK_CHAR =
   /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/g;
 
+// No natural-language word, and no realistic URL/path/filename, reaches this
+// length. Only a spaceless pathological run (a base64 data URI, a minified
+// bundle, a long hash) does — the word-count heuristic prices anything
+// spaceless as a single "word" worth ~2 tokens regardless of length, so
+// without this floor such a run never registers as oversized. Scoping the
+// floor to individual words past this threshold — rather than to the
+// aggregate character count of the whole string — keeps it from firing on
+// ordinary link-heavy prose, where 25%+ of "words" can be 40-100 char URLs
+// without the text itself being pathological.
+const LONG_WORD_CHARS = 400;
+
 export function estimateTokens(text: string): number {
   const cjkChars = (text.match(CJK_CHAR) ?? []).length;
   // Strip the CJK codepoints before the whitespace heuristic so a mixed
   // "Latin 中文" string counts both halves, then add the CJK codepoints back at
   // ~1 token each. Pure-Latin text is unchanged — there is nothing to strip.
   const stripped = text.replace(CJK_CHAR, " ");
-  const words = stripped.split(/\s+/).filter(Boolean).length;
-  const wordEstimate = Math.ceil(words / 0.75);
-  // The word-count heuristic prices any spaceless run — a base64 data URI, a
-  // minified bundle, a long URL/hash — as a single "word" worth ~2 tokens
-  // regardless of length, so it never registers as oversized. Floor the
-  // estimate at a conservative 6 chars/token (English text averages ~4-5)
-  // over the non-whitespace character count. For normal multi-word text this
-  // floor sits well below the word-count estimate and never wins — it only
-  // bites when a run has no whitespace to divide it into "words" at all.
-  const nonSpaceChars = stripped.replace(/\s+/g, "").length;
-  const charFloor = Math.ceil(nonSpaceChars / 6);
-  return Math.max(wordEstimate, charFloor) + cjkChars;
+  // .length is UTF-16 code units, not codepoints — conservative (an
+  // overcount) for astral-plane characters, which is the safe direction for
+  // a floor whose purpose is to avoid under-pricing.
+  const words = stripped.split(/\s+/).filter(Boolean);
+  const wordEstimate = Math.ceil(words.length / 0.75);
+  let longWordExtra = 0;
+  for (const word of words) {
+    // >= (not >): sliceByTokens windows are exactly MAX_TOKENS characters,
+    // which numerically equals LONG_WORD_CHARS — a slice re-evaluated by this
+    // function must still floor its own estimate rather than reporting the
+    // ~2-token baseline for what is still a spaceless pathological piece.
+    if (word.length >= LONG_WORD_CHARS) {
+      longWordExtra += Math.ceil(word.length / 6);
+    }
+  }
+  return wordEstimate + cjkChars + longWordExtra;
 }
 
 /** Slice a spaceless run into codepoint groups each ≈ maxTokens tokens. */

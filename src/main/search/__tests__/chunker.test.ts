@@ -196,4 +196,76 @@ describe("chunkText", () => {
       { index: 0, heading: null, text, tokenCount: 100 },
     ]);
   });
+
+  it("does not reclassify a realistic link-heavy section as oversized", () => {
+    // Regression for a review finding: an aggregate character floor (total
+    // non-space chars / 6) is NOT scoped to pathological runs — ordinary
+    // club content that is ~25% URLs/paths/filenames (meeting-notes links,
+    // Drive links, local file paths) can easily average >6 non-space chars
+    // per "word" without any single word being remotely pathological. That
+    // aggregate floor pushed a 300-word, exactly-at-the-limit section from
+    // wordEstimate 400 (1 chunk, matching pre-Task-11 behavior) to ~941
+    // (reclassified oversized, 3 chunks) — a boundary-stability violation.
+    // The floor is scoped per-word instead (LONG_WORD_CHARS in chunker.ts),
+    // so realistic URLs (tens to ~100 chars) never trigger it and this
+    // section's estimate is exactly the plain word-count estimate.
+    const filler = [
+      "the",
+      "club",
+      "meeting",
+      "was",
+      "held",
+      "to",
+      "discuss",
+      "budget",
+      "plans",
+      "for",
+      "next",
+      "semester",
+      "members",
+      "voted",
+      "on",
+      "new",
+      "officers",
+      "and",
+      "reviewed",
+      "the",
+      "agenda",
+      "before",
+      "closing",
+      "with",
+      "announcements",
+      "about",
+      "upcoming",
+      "events",
+      "and",
+      "fundraising",
+    ];
+    const urls = [
+      "https://cpclubs.calpoly.edu/orgs/robotics-club/documents/meeting-notes-2026-03-15-agenda-final.pdf",
+      "https://drive.google.com/file/d/1A2b3C4d5E6f7G8h9I0jKlMnOpQrStUvWxYz/view?usp=sharing",
+      "/Users/clubadmin/Documents/ClubArchive/2026/spring/officer-elections-results.xlsx",
+      "https://calendar.google.com/calendar/event?eid=abcdefghijklmnopqrstuvwxyz1234567890",
+      "C:\\Users\\officer\\Documents\\Fundraising\\2026-spring-budget-proposal-v3.docx",
+    ];
+    const words: string[] = [];
+    for (let i = 0; i < 300; i++) {
+      words.push(
+        i % 4 === 0
+          ? urls[Math.floor(i / 4) % urls.length]
+          : filler[i % filler.length],
+      );
+    }
+    const text = words.join(" ");
+
+    // wordEstimate = ceil(300 / 0.75) = 400 — exactly at MAX_TOKENS, the
+    // pre-Task-11 boundary condition (<=, so still a single chunk).
+    expect(estimateTokens(text)).toBe(400);
+
+    const chunks = chunkText(text, "Link Heavy");
+
+    expect(chunks).toEqual([
+      { index: 0, heading: null, text, tokenCount: 400 },
+    ]);
+  });
 });
