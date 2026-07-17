@@ -622,6 +622,34 @@ describe("NotionConnector walk result", () => {
 
     expect(walk.complete).toBe(false);
   });
+
+  it("marks the walk incomplete when a block subtree exceeds the depth cap", async () => {
+    // Every level of block_children.list returns one more toggle with
+    // has_children: true, so fetchAllBlocks recurses without bound — the only
+    // thing that stops it is the MAX_BLOCK_DEPTH cap. This exercises the block
+    // recursion cap in fetchAllBlocks, not walkPage's page-depth (MAX_DEPTH)
+    // cap: there is no child_page anywhere in this tree.
+    mockClient.pages.retrieve.mockResolvedValue(makePage("root", "Root"));
+    mockClient.blocks.children.list.mockImplementation(() =>
+      Promise.resolve({
+        results: [
+          {
+            ...makeBlock("toggle", { rich_text: makeRichText("Nested") }),
+            has_children: true,
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+      }),
+    );
+
+    const walk = await drainWalk(new NotionConnector("test-token", "root", 0));
+
+    // The subtree below the cap was silently dropped — never added to `seen`.
+    // A walk that drops nodes must never be reported complete, or
+    // reconciliation will delete a page it never actually looked at.
+    expect(walk.complete).toBe(false);
+  });
 });
 
 describe("listNotionItems", () => {

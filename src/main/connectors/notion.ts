@@ -198,7 +198,12 @@ export class NotionConnector implements Connector {
     blockId: string,
     depth = 0,
   ): Promise<BlockObjectResponse[]> {
-    if (depth >= MAX_BLOCK_DEPTH) return [];
+    // Blocks below the depth cap are unseen, not deleted — including any
+    // child pages nested in them, since discovery flows through this list.
+    if (depth >= MAX_BLOCK_DEPTH) {
+      this.complete = false;
+      return [];
+    }
     const blocks: BlockObjectResponse[] = [];
     let cursor: string | undefined;
     do {
