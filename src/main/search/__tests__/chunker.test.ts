@@ -335,4 +335,65 @@ describe("chunkText", () => {
       expect(chunk.tokenCount).toBe(estimateTokens(chunk.text));
     }
   });
+
+  it("bounds a roster of emails that stay under LONG_WORD_CHARS but are still length-blind to word-count pricing", () => {
+    // Regression for a review finding: Round 3's per-word floor only
+    // reprices words that cross LONG_WORD_CHARS (24 chars) into a
+    // char-based estimate — everything at or under that threshold still
+    // went through the flat ~1.33-tokens/word count heuristic, which is
+    // length-blind *within* the short bucket. 300 club-member emails
+    // (~21 chars each, comfortably under 24 so they stay "short") priced as
+    // a plain word count of 400 and landed in a single ~6,700-char chunk —
+    // roughly 4x the real token budget. This is the same family of bug as
+    // the UUID/hash cases, one bucket over.
+    const emails = Array.from(
+      { length: 300 },
+      (_, i) => `member${String(i).padStart(3, "0")}@calpoly.edu`,
+    );
+    expect(emails.every((w) => w.length === 21)).toBe(true);
+    const text = emails.join(" ");
+
+    // Word-count-only pricing would say exactly 400 (300 / 0.75) — same
+    // number that made the Round-2 link-heavy pin look safe. The
+    // char-based floor over the short bucket (300 words × 21 chars / 8)
+    // reveals the real estimate is much higher.
+    expect(estimateTokens(text)).toBe(788);
+
+    const chunks = chunkText(text, "Email Roster");
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.text.length).toBeLessThanOrEqual(400 * 8);
+      expect(chunk.tokenCount).toBe(estimateTokens(chunk.text));
+    }
+  });
+
+  it("pins the short-bucket char-floor crossover at ~10.67 avg chars/word", () => {
+    // Deliberate boundary probe for the Round 4 fix: the floor
+    // (shortWordChars / 8) only beats the count estimate
+    // (shortWordCount / 0.75) once the short-bucket average word length
+    // exceeds 8 / 0.75 ≈ 10.67 chars. Pinned on both sides of that line, at
+    // a word count (300) large enough that rounding doesn't blur the
+    // comparison.
+    const w11 = Array.from(
+      { length: 300 },
+      (_, i) => `lorem${String(i).padStart(6, "0")}`,
+    );
+    expect(w11.every((w) => w.length === 11)).toBe(true);
+    // 300 × 11 / 8 = 412.5 → 413, just over MAX_TOKENS: the floor wins and
+    // tips this section from "exactly at the limit" to oversized.
+    expect(estimateTokens(w11.join(" "))).toBe(413);
+    expect(chunkText(w11.join(" "), "Eleven").length).toBeGreaterThan(1);
+
+    const w9 = Array.from(
+      { length: 300 },
+      (_, i) => `word${String(i).padStart(5, "0")}`,
+    );
+    expect(w9.every((w) => w.length === 9)).toBe(true);
+    // 300 × 9 / 8 = 337.5 → 338, under the 400 count-based estimate: the
+    // count estimate wins and this section is unaffected by the Round 4
+    // fix — identical to Round 3 and to the pre-Task-11 formula.
+    expect(estimateTokens(w9.join(" "))).toBe(400);
+    expect(chunkText(w9.join(" "), "Nine")).toHaveLength(1);
+  });
 });

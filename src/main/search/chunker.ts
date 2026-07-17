@@ -27,6 +27,34 @@ const CJK_CHAR =
 // disappearing into a flat ~1.33-token charge each.
 const LONG_WORD_CHARS = 24;
 
+// Pricing model, complete (three tiers):
+//   1. CJK codepoints — priced individually at ~1 token each (no whitespace
+//      to count "words" with).
+//   2. Long words (length > LONG_WORD_CHARS) — priced by character count at
+//      a conservative worst-case 4 chars/token; excluded from the
+//      word-count bucket below so they can't be double-priced or dilute it.
+//   3. Short words (length <= LONG_WORD_CHARS) — priced by
+//      max(count-based estimate, char-based floor at 8 chars/token). The
+//      count-based estimate (~1.33 tokens/word) is accurate for ordinary
+//      prose but is length-blind *within* the short bucket: a run of
+//      moderately long short-bucket words (e.g. 300 ~21-char emails, all
+//      individually under LONG_WORD_CHARS) still prices as a flat
+//      ~1.33 tokens/word and silently under-counts. The char-based floor
+//      (chars/8) catches that. Crossover: the floor only wins when the
+//      short-bucket average word length exceeds 8/0.75 ≈ 10.67 chars;
+//      normal English prose (and every pre-Task-11 test fixture, whose
+//      average is far below its own 9-char maximum) sits well under that,
+//      so it never fires there — verified by execution against the
+//      paragraph-identity and link-heavy pins and the full pre-Task-11
+//      suite.
+//   Accepted residual (coordinator-adjudicated, not fixed further): content
+//   whose short-bucket average word length sits *inside* the 8-10.67 char
+//   band, with real per-token entropy above the 8-chars/token assumption
+//   (e.g. dense abbreviation-like tokens ~9-10 chars each), can still
+//   under-price by up to ~2x — the structural worst case for any
+//   count-vs-floor scheme at this crossover. Closing that fully would
+//   require repricing ordinary prose, which the pre-Task-11
+//   boundary-stability constraint forbids.
 export function estimateTokens(text: string): number {
   const cjkChars = (text.match(CJK_CHAR) ?? []).length;
   // Strip the CJK codepoints before the whitespace heuristic so a mixed
@@ -38,6 +66,7 @@ export function estimateTokens(text: string): number {
   // a floor whose purpose is to avoid under-pricing.
   const words = stripped.split(/\s+/).filter(Boolean);
   let shortWordCount = 0;
+  let shortWordChars = 0;
   let longWordChars = 0;
   for (const word of words) {
     if (word.length > LONG_WORD_CHARS) {
@@ -47,9 +76,14 @@ export function estimateTokens(text: string): number {
       longWordChars += Math.ceil(word.length / 4);
     } else {
       shortWordCount++;
+      shortWordChars += word.length;
     }
   }
-  return Math.ceil(shortWordCount / 0.75) + cjkChars + longWordChars;
+  const shortWordEstimate = Math.max(
+    Math.ceil(shortWordCount / 0.75),
+    Math.ceil(shortWordChars / 8),
+  );
+  return shortWordEstimate + cjkChars + longWordChars;
 }
 
 /** Slice a spaceless run into codepoint groups each ≈ maxTokens tokens. */
