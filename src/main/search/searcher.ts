@@ -4,12 +4,13 @@ import type { EmbedConfig } from "./embedder";
 import type { ChunkRow } from "../db/database";
 import {
   embedQuery,
-  bufferToEmbedding,
+  decodeEmbeddingInto,
   getEmbeddingModelName,
 } from "./embedder";
 import {
   iterateChunksWithEmbeddingsByModel,
   getChunkCountByModel,
+  getChunksByIds,
   getDocumentsByIds,
   searchFts,
 } from "../db/database";
@@ -80,11 +81,14 @@ function rrfMerge(
 
 type Scored = { chunk: ChunkRow; score: number };
 
+/** What the scan loop keeps per candidate — just enough to rank it. */
+type ScanEntry = { id: string; score: number };
+
 /**
  * Keeps `top` sorted descending and never longer than K. Ties keep scan order,
  * matching the stable full sort this replaced.
  */
-function insertTopK(top: Scored[], entry: Scored, k: number): void {
+function insertTopK(top: ScanEntry[], entry: ScanEntry, k: number): void {
   if (top.length === k && entry.score <= top[top.length - 1].score) return;
 
   let lo = 0;
@@ -137,9 +141,17 @@ function scanVectors(
   model: string,
   queryEmbedding: Float32Array,
   maxScan: number,
-): { top: Scored[]; scanned: number } {
-  const top: Scored[] = [];
+): { top: ScanEntry[]; scanned: number } {
+  const top: ScanEntry[] = [];
   let scanned = 0;
+
+  // One scratch buffer for the whole scan, sized to the query's own dimensions
+  // (every chunk here is expected to share them — that's what `model` filters
+  // for). decodeEmbeddingInto only writes through it and hands back the same
+  // reference each call: nothing here retains that reference past the
+  // cosineSimilarity call below, so reusing it across iterations is safe. Only
+  // `id` and `score` — plain values, not views into anything — make it into `top`.
+  const scratch = new Float32Array(queryEmbedding.length);
 
   // `for…of` calls .return() on the generator on *any* abrupt exit — the `break`
   // below, or a throw out of cosineSimilarity — and that is what closes the
@@ -150,9 +162,10 @@ function scanVectors(
     scanned++;
     const score = cosineSimilarity(
       queryEmbedding,
-      bufferToEmbedding(chunk.embedding!),
+      decodeEmbeddingInto(chunk.embedding, scratch),
     );
-    if (Number.isFinite(score)) insertTopK(top, { chunk, score }, COSINE_TOP_K);
+    if (Number.isFinite(score))
+      insertTopK(top, { id: chunk.id, score }, COSINE_TOP_K);
     if (scanned >= maxScan) break;
   }
 
@@ -187,12 +200,22 @@ export async function search(
   signal?.throwIfAborted();
 
   const model = getEmbeddingModelName(embedConfig);
-  const { top: vectorScored, scanned } = scanVectors(
+  const { top, scanned } = scanVectors(db, model, queryEmbedding, maxScan);
+
+  // The scan only ever touched `id` + `embedding`; survivors' full rows (text
+  // for rerank/snippets, document_id for the doc join) come back here. The `IN`
+  // query makes no ordering promise, so this reorders by `top` — already score
+  // desc, stable for ties in scan order — rather than trusting query-result
+  // order, which the id-refetch could otherwise silently scramble.
+  const survivorRows = getChunksByIds(
     db,
-    model,
-    queryEmbedding,
-    maxScan,
+    top.map((t) => t.id),
   );
+  const survivorById = new Map(survivorRows.map((r) => [r.id, r]));
+  const vectorScored: Scored[] = top.flatMap((t) => {
+    const chunk = survivorById.get(t.id);
+    return chunk ? [{ chunk, score: t.score }] : [];
+  });
 
   if (vectorScored.length === 0 && ftsResults.length === 0) {
     return { results: [], rerankFailed: false };

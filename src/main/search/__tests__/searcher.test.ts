@@ -317,6 +317,95 @@ describe("search", () => {
     expect(titles).toContain("Project Plan");
   });
 
+  it("survivors carry correct text after the id-refetch (guards the join)", async () => {
+    // The scan now only carries {id, score}; full rows (text, heading) come back
+    // afterward via getChunksByIds, keyed by id. `SELECT ... WHERE id IN (...)`
+    // returns rows in the database's own order (id-index order here), not the
+    // order the ids were passed in — so ids are chosen to sort alphabetically
+    // in the exact *reverse* of their intended cosine-score rank. A join that
+    // trusted query-result order (e.g. zipping survivor rows against the
+    // score-sorted top-K by position) would pair each score with the wrong
+    // chunk's text; this only stays green if the join is keyed by id.
+    upsertChunks(db, [
+      {
+        id: "chunk-a", // worst match, but would sort FIRST from the IN query
+        documentId: "d1",
+        chunkIndex: 0,
+        heading: null,
+        text: "passage for chunk-a",
+        embedding: makeEmbedding([0.1, 0.9, 0.0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+      {
+        id: "chunk-b",
+        documentId: "d1",
+        chunkIndex: 1,
+        heading: null,
+        text: "passage for chunk-b",
+        embedding: makeEmbedding([0.5, 0.5, 0.0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+      {
+        id: "chunk-c",
+        documentId: "d1",
+        chunkIndex: 2,
+        heading: null,
+        text: "passage for chunk-c",
+        embedding: makeEmbedding([0.7, 0.3, 0.0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+      {
+        id: "chunk-d",
+        documentId: "d1",
+        chunkIndex: 3,
+        heading: null,
+        text: "passage for chunk-d",
+        embedding: makeEmbedding([0.9, 0.1, 0.0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+      {
+        id: "chunk-e", // best match, but would sort LAST from the IN query
+        documentId: "d1",
+        chunkIndex: 4,
+        heading: null,
+        text: "passage for chunk-e",
+        embedding: makeEmbedding([1, 0, 0]),
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    // Ollama config: no rerank, so the scan → id-refetch join is the only thing
+    // that can reorder or mis-pair results. "zzqqxx" matches no chunk, so FTS
+    // contributes nothing either.
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: [[1, 0, 0]] }),
+    } as Response);
+
+    const { results } = await search(db, "zzqqxx", { provider: "ollama" });
+
+    expect(results.map((r) => r.chunkId)).toEqual([
+      "chunk-e",
+      "chunk-d",
+      "chunk-c",
+      "chunk-b",
+      "chunk-a",
+    ]);
+    for (const r of results) {
+      expect(r.snippet).toBe(`passage for ${r.chunkId}`);
+    }
+  });
+
   it("finds a chunk beyond the 10,000th (H6)", async () => {
     // The old scan was `SELECT ... LIMIT 10000` with no ORDER BY, so it saw the
     // first 10k chunks by rowid and nothing else. The needle goes in last, which

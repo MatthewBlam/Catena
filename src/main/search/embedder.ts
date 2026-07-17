@@ -273,3 +273,30 @@ export function bufferToEmbedding(buf: Buffer): Float32Array {
   new Uint8Array(copy).set(buf);
   return new Float32Array(copy);
 }
+
+/**
+ * Same byte-copy `bufferToEmbedding` does — a Buffer's bytes can start at an
+ * unaligned offset within its own backing ArrayBuffer, so a Float32Array can't
+ * be laid directly over it, and the copy is what fixes that — except it writes
+ * into a caller-supplied `scratch` instead of allocating a fresh ArrayBuffer
+ * each call. Built for a scan loop that decodes thousands of same-length
+ * embeddings and wants exactly one Float32Array alive at a time, not one per row.
+ *
+ * If `buf` isn't the same byte length as `scratch`, this does *not* partially
+ * overwrite it (that would silently leave stale floats from a previous row and
+ * corrupt the score). It falls back to `bufferToEmbedding`, returning a
+ * correctly-sized array so the caller's own dimension check still fires —
+ * against the chunk's true length, not scratch's.
+ */
+export function decodeEmbeddingInto(
+  buf: Buffer,
+  scratch: Float32Array,
+): Float32Array {
+  if (buf.byteLength !== scratch.byteLength) {
+    return bufferToEmbedding(buf);
+  }
+  new Uint8Array(scratch.buffer, scratch.byteOffset, scratch.byteLength).set(
+    buf,
+  );
+  return scratch;
+}

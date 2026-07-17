@@ -390,6 +390,37 @@ export function getChunksByDocumentId(
   return rows.map(mapChunkRow);
 }
 
+/**
+ * Full rows for a set of chunk ids — the second half of the vector-scan split:
+ * the scan itself only ever touches `id` and `embedding` (see
+ * iterateChunksWithEmbeddingsByModel below), so once the top-K survivors are
+ * known, this is how their text/heading/document_id come back for rerank and
+ * snippets. Batched like deleteDocumentsByIds/getDocumentsByIds — SQLite caps
+ * bound parameters well under most corpora, but there is no reason to rely on
+ * that ceiling here either.
+ *
+ * The `IN` clause does not promise result order, and does not owe the caller
+ * one: this returns whatever order SQLite hands back. Callers that care about
+ * order (e.g. a score-sorted top-K) must re-sort by their own id list.
+ */
+export function getChunksByIds(
+  db: Database.Database,
+  ids: string[],
+): ChunkRow[] {
+  if (ids.length === 0) return [];
+  const BATCH_SIZE = 500;
+  const result: ChunkRow[] = [];
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const batch = ids.slice(i, i + BATCH_SIZE);
+    const placeholders = batch.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT * FROM chunks WHERE id IN (${placeholders})`)
+      .all(...batch) as ChunkDbRow[];
+    result.push(...rows.map(mapChunkRow));
+  }
+  return result;
+}
+
 export function getChunksWithEmbeddingsByModel(
   db: Database.Database,
   model: string,
@@ -403,24 +434,40 @@ export function getChunksWithEmbeddingsByModel(
   return rows.map(mapChunkRow);
 }
 
+/** The columns a cosine scan actually touches — nothing scoring doesn't need. */
+export interface ChunkEmbeddingRow {
+  id: string;
+  embedding: Buffer;
+}
+
+interface ChunkEmbeddingDbRow {
+  id: string;
+  embedding: Buffer;
+}
+
 /**
  * Streams chunks one row at a time instead of materializing every embedding
  * Buffer at once. At 1536 dimensions an embedding is ~6 KB, so the array-returning
  * version above costs ~61 MB per search at its 10k cap — and the cap is the only
  * thing keeping that number from growing with the corpus. Callers that only need
  * a top-K should iterate and keep O(K).
+ *
+ * Selects only `id` and `embedding` — the scan only scores, it never reads
+ * `text`/`heading`/`document_id`. Those are wasted work for the ~250k-40 rows
+ * that don't survive to the top-K; survivors get their full row afterward via
+ * getChunksByIds.
  */
 export function* iterateChunksWithEmbeddingsByModel(
   db: Database.Database,
   model: string,
-): Generator<ChunkRow> {
+): Generator<ChunkEmbeddingRow> {
   const rows = db
     .prepare(
-      "SELECT * FROM chunks WHERE embedding IS NOT NULL AND embedding_model = ?",
+      "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL AND embedding_model = ?",
     )
-    .iterate(model) as IterableIterator<ChunkDbRow>;
+    .iterate(model) as IterableIterator<ChunkEmbeddingDbRow>;
   for (const row of rows) {
-    yield mapChunkRow(row);
+    yield { id: row.id, embedding: row.embedding };
   }
 }
 
