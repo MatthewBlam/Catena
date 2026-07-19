@@ -144,6 +144,21 @@ export const migrations: Migration[] = [
          AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'onboarding_complete')`,
     ],
   },
+  {
+    version: 8,
+    statements: [
+      `CREATE TABLE recent_searches (
+        id TEXT PRIMARY KEY,
+        query TEXT NOT NULL,
+        normalized_query TEXT NOT NULL UNIQUE,
+        response_json TEXT NOT NULL,
+        result_count INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX idx_recent_searches_updated_at ON recent_searches(updated_at)`,
+    ],
+  },
 ];
 
 const LATEST_VERSION = Math.max(...migrations.map((m) => m.version));

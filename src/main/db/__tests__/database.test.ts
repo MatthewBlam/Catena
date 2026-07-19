@@ -29,8 +29,16 @@ import {
   iterateChunksWithEmbeddingsByModel,
   updateSourceSyncState,
   resetStalePendingDocuments,
+  upsertRecentSearch,
+  listRecentSearches,
+  getRecentSearchById,
+  deleteRecentSearch,
+  pruneExpiredRecentSearches,
+  saveRecentSearchFromResponse,
   type ChunkRow,
+  type RecentSearchSnapshot,
 } from "../database";
+import type { SearchResponse, SearchResult } from "../../../shared/types";
 
 describe("migrations", () => {
   let db: Database.Database;
@@ -249,6 +257,22 @@ describe("settings", () => {
   });
 });
 
+function makeSnapshot(resultCount: number): RecentSearchSnapshot {
+  const results: SearchResult[] = Array.from(
+    { length: resultCount },
+    (_, i) => ({
+      chunkId: `c${i}`,
+      documentTitle: `Doc ${i}`,
+      snippet: `snippet ${i}`,
+      heading: null,
+      url: null,
+      provider: "notion",
+      score: 1,
+    }),
+  );
+  return { results };
+}
+
 function seedFixtures(db: Database.Database): void {
   insertSource(db, {
     id: "s1",
@@ -332,6 +356,12 @@ describe("clearAllData", () => {
       chunkCount: 0,
     });
     expect(getSetting(db, "embedding_provider")).toBeNull();
+  });
+
+  it("empties recent_searches", () => {
+    upsertRecentSearch(db, "club events", makeSnapshot(1));
+    clearAllData(db);
+    expect(listRecentSearches(db)).toEqual([]);
   });
 });
 
@@ -852,5 +882,182 @@ describe("updateSourceSyncState (H3)", () => {
         lastSyncErrorCount: 0,
       }),
     ).not.toThrow();
+  });
+});
+
+describe("recent searches", () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = createTestDb();
+  });
+  afterEach(() => db.close());
+
+  it("re-upsert with a differently-cased/spaced query updates the same row, keeping id/created_at", () => {
+    upsertRecentSearch(
+      db,
+      "  Foo  BAR ",
+      makeSnapshot(1),
+      "2024-01-01T00:00:00.000Z",
+    );
+    const original = listRecentSearches(db)[0];
+
+    upsertRecentSearch(
+      db,
+      "foo bar",
+      makeSnapshot(3),
+      "2024-01-02T00:00:00.000Z",
+    );
+
+    const list = listRecentSearches(db);
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(original.id);
+    expect(list[0].createdAt).toBe(original.createdAt);
+    expect(list[0].resultCount).toBe(3);
+    expect(list[0].updatedAt).toBe("2024-01-02T00:00:00.000Z");
+
+    const detail = getRecentSearchById(db, original.id);
+    expect(detail?.createdAt).toBe(original.createdAt);
+  });
+
+  it("distinct queries create distinct entries, newest first", () => {
+    upsertRecentSearch(
+      db,
+      "alpha",
+      makeSnapshot(1),
+      "2024-01-01T00:00:00.000Z",
+    );
+    upsertRecentSearch(db, "beta", makeSnapshot(1), "2024-01-02T00:00:00.000Z");
+    upsertRecentSearch(
+      db,
+      "gamma",
+      makeSnapshot(1),
+      "2024-01-03T00:00:00.000Z",
+    );
+
+    expect(listRecentSearches(db).map((r) => r.query)).toEqual([
+      "gamma",
+      "beta",
+      "alpha",
+    ]);
+  });
+
+  it("caps at 50 rows, evicting the oldest on the 51st distinct query", () => {
+    for (let i = 0; i < 51; i++) {
+      upsertRecentSearch(
+        db,
+        `query-${i}`,
+        makeSnapshot(1),
+        new Date(Date.UTC(2024, 0, 1, 0, 0, i)).toISOString(),
+      );
+    }
+
+    const list = listRecentSearches(db, 100);
+    expect(list).toHaveLength(50);
+    const queries = list.map((r) => r.query);
+    expect(queries).not.toContain("query-0");
+    expect(queries).toContain("query-1");
+    expect(queries).toContain("query-50");
+  });
+
+  it("prune boundary: kept exactly at the 7-day cutoff, deleted 1ms past it; returns the deleted count", () => {
+    const nowMs = Date.parse("2024-01-08T00:00:00.000Z");
+    const cutoffIso = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    upsertRecentSearch(db, "kept", makeSnapshot(1), cutoffIso);
+    upsertRecentSearch(
+      db,
+      "expired",
+      makeSnapshot(1),
+      new Date(Date.parse(cutoffIso) - 1).toISOString(),
+    );
+
+    const deletedCount = pruneExpiredRecentSearches(db, nowMs);
+
+    expect(deletedCount).toBe(1);
+    expect(listRecentSearches(db).map((r) => r.query)).toEqual(["kept"]);
+  });
+
+  it("re-upserting an old entry rescues it from a later prune", () => {
+    const nowMs = Date.parse("2024-01-08T00:00:00.000Z");
+    upsertRecentSearch(
+      db,
+      "stale",
+      makeSnapshot(1),
+      "2024-01-01T00:00:00.000Z",
+    );
+
+    // Bring it forward, inside the retention window, before the prune runs.
+    upsertRecentSearch(
+      db,
+      "stale",
+      makeSnapshot(2),
+      "2024-01-07T12:00:00.000Z",
+    );
+
+    const deletedCount = pruneExpiredRecentSearches(db, nowMs);
+    expect(deletedCount).toBe(0);
+    expect(listRecentSearches(db)).toHaveLength(1);
+  });
+
+  it("getRecentSearchById round-trips, and returns null for a missing id or corrupt JSON", () => {
+    upsertRecentSearch(
+      db,
+      "roundtrip",
+      makeSnapshot(2),
+      "2024-01-01T00:00:00.000Z",
+    );
+    const row = listRecentSearches(db)[0];
+
+    const detail = getRecentSearchById(db, row.id);
+    expect(detail).not.toBeNull();
+    expect(detail?.query).toBe("roundtrip");
+    expect(detail?.results).toHaveLength(2);
+
+    expect(getRecentSearchById(db, "does-not-exist")).toBeNull();
+
+    db.prepare("UPDATE recent_searches SET response_json = ? WHERE id = ?").run(
+      "{not valid json",
+      row.id,
+    );
+    expect(getRecentSearchById(db, row.id)).toBeNull();
+  });
+
+  it("deleteRecentSearch removes exactly the targeted row", () => {
+    upsertRecentSearch(db, "one", makeSnapshot(1), "2024-01-01T00:00:00.000Z");
+    upsertRecentSearch(db, "two", makeSnapshot(1), "2024-01-02T00:00:00.000Z");
+    const [keep, remove] = listRecentSearches(db);
+
+    deleteRecentSearch(db, remove.id);
+
+    const remaining = listRecentSearches(db);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(keep.id);
+  });
+
+  it("saveRecentSearchFromResponse saves on results, refuses empty/cancelled, and returns false (not throw) on DB failure", () => {
+    const okResponse: SearchResponse = {
+      results: makeSnapshot(1).results,
+      rerankFailed: false,
+    };
+    expect(saveRecentSearchFromResponse(db, "hello", okResponse)).toBe(true);
+    expect(listRecentSearches(db)).toHaveLength(1);
+
+    const emptyResponse: SearchResponse = { results: [], rerankFailed: false };
+    expect(saveRecentSearchFromResponse(db, "empty", emptyResponse)).toBe(
+      false,
+    );
+
+    const cancelledResponse: SearchResponse = {
+      results: makeSnapshot(1).results,
+      rerankFailed: false,
+      cancelled: true,
+    };
+    expect(
+      saveRecentSearchFromResponse(db, "cancelled", cancelledResponse),
+    ).toBe(false);
+    expect(listRecentSearches(db)).toHaveLength(1);
+
+    db.exec("DROP TABLE recent_searches");
+    expect(saveRecentSearchFromResponse(db, "boom", okResponse)).toBe(false);
   });
 });

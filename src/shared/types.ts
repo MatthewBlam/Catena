@@ -75,6 +75,19 @@ export interface SearchResponse {
   cancelled?: boolean;
 }
 
+export interface RecentSearch {
+  id: string;
+  query: string;
+  resultCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecentSearchDetail extends RecentSearch {
+  results: SearchResult[];
+  rewrittenQuery?: string;
+}
+
 export interface SyncProgress {
   sourceId: string;
   phase:

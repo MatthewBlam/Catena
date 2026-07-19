@@ -1,5 +1,11 @@
 import type Database from "better-sqlite3";
-import type { SyncOutcome } from "../../shared/types";
+import type {
+  SyncOutcome,
+  SearchResult,
+  SearchResponse,
+  RecentSearch,
+  RecentSearchDetail,
+} from "../../shared/types";
 
 // --- Sources ---
 
@@ -627,6 +633,199 @@ export function getSetting(db: Database.Database, key: string): string | null {
   return row.value;
 }
 
+// --- Recent Searches ---
+
+/** How long a saved search survives before pruneExpiredRecentSearches sweeps it. */
+const RECENT_SEARCH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Row cap regardless of age — bounds table growth for a user who searches constantly. */
+const RECENT_SEARCH_CAP = 50;
+
+/**
+ * What a search response contributes to a recent-search row. Deliberately
+ * excludes `rerankFailed`/`truncated`: those describe the live run's
+ * machinery at the moment it ran, not the results themselves, and a restored
+ * view has no "try again" affordance for them beyond re-searching. `rewrittenQuery`
+ * survives because it explains what the stored results actually are.
+ */
+export interface RecentSearchSnapshot {
+  results: SearchResult[];
+  rewrittenQuery?: string;
+}
+
+interface RecentSearchDbRow {
+  id: string;
+  query: string;
+  normalized_query: string;
+  response_json: string;
+  result_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Collapses a query to the form two searches are "the same" for recent-search
+ * dedup purposes: trims, collapses internal whitespace runs, lowercases.
+ * Done in JS rather than SQL `LOWER()` because `LOWER()` only folds ASCII —
+ * club names and search terms are not guaranteed to be.
+ */
+function normalizeQuery(query: string): string {
+  return query.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * Inserts a new recent search, or — if `query` normalizes to one already
+ * stored — updates that row's query/snapshot/count/updated_at in place while
+ * keeping its original `id` and `created_at`. ON CONFLICT DO UPDATE, not
+ * INSERT OR REPLACE: REPLACE would delete and re-insert the row, minting a
+ * new id and losing created_at, which breaks "re-upserting rescues an old
+ * entry" (the row's identity must survive a refresh).
+ *
+ * `nowIso` is injectable so tests can control ordering/cap-eviction without
+ * relying on real-clock timing.
+ */
+export function upsertRecentSearch(
+  db: Database.Database,
+  query: string,
+  snapshot: RecentSearchSnapshot,
+  nowIso: string = new Date().toISOString(),
+): void {
+  const normalizedQuery = normalizeQuery(query);
+  const responseJson = JSON.stringify(snapshot);
+  const resultCount = snapshot.results.length;
+  const id = crypto.randomUUID();
+
+  const run = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO recent_searches (id, query, normalized_query, response_json, result_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(normalized_query) DO UPDATE SET
+         query = excluded.query,
+         response_json = excluded.response_json,
+         result_count = excluded.result_count,
+         updated_at = excluded.updated_at`,
+    ).run(
+      id,
+      query,
+      normalizedQuery,
+      responseJson,
+      resultCount,
+      nowIso,
+      nowIso,
+    );
+
+    db.prepare(
+      `DELETE FROM recent_searches WHERE id NOT IN (
+         SELECT id FROM recent_searches ORDER BY updated_at DESC LIMIT ?
+       )`,
+    ).run(RECENT_SEARCH_CAP);
+  });
+  run();
+}
+
+/** Light rows for the recents list — no response_json, so no snapshot cost for a list nobody expanded. */
+export function listRecentSearches(
+  db: Database.Database,
+  limit = 10,
+): RecentSearch[] {
+  const rows = db
+    .prepare(
+      `SELECT id, query, result_count, created_at, updated_at
+       FROM recent_searches
+       ORDER BY updated_at DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Pick<
+    RecentSearchDbRow,
+    "id" | "query" | "result_count" | "created_at" | "updated_at"
+  >[];
+  return rows.map((row) => ({
+    id: row.id,
+    query: row.query,
+    resultCount: row.result_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+/**
+ * `null` on a missing id and on hand-corrupted `response_json` alike — the
+ * renderer's "this recent search is gone, go search again" path is correct
+ * for both, so there is no reason to distinguish them here.
+ */
+export function getRecentSearchById(
+  db: Database.Database,
+  id: string,
+): RecentSearchDetail | null {
+  const row = db
+    .prepare("SELECT * FROM recent_searches WHERE id = ?")
+    .get(id) as RecentSearchDbRow | undefined;
+  if (!row) return null;
+
+  let snapshot: RecentSearchSnapshot;
+  try {
+    snapshot = JSON.parse(row.response_json) as RecentSearchSnapshot;
+  } catch {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    query: row.query,
+    resultCount: row.result_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    results: snapshot.results,
+    rewrittenQuery: snapshot.rewrittenQuery,
+  };
+}
+
+export function deleteRecentSearch(db: Database.Database, id: string): void {
+  db.prepare("DELETE FROM recent_searches WHERE id = ?").run(id);
+}
+
+/**
+ * Sweeps rows whose updated_at is older than the retention window. Strict
+ * `<`, not `<=`: a row exactly at the cutoff has not yet exceeded its 7 days
+ * and must survive. ISO-8601 strings sort chronologically as text, so this
+ * compares directly rather than parsing every row back to a Date.
+ */
+export function pruneExpiredRecentSearches(
+  db: Database.Database,
+  nowMs: number = Date.now(),
+): number {
+  const cutoffIso = new Date(nowMs - RECENT_SEARCH_RETENTION_MS).toISOString();
+  const result = db
+    .prepare("DELETE FROM recent_searches WHERE updated_at < ?")
+    .run(cutoffIso);
+  return result.changes;
+}
+
+/**
+ * The seam the search-IPC handler calls after every completed search. Refuses
+ * to save a cancelled/superseded response (nothing real to show later) or one
+ * with zero results (nothing worth revisiting). Any DB failure is caught and
+ * logged rather than thrown: a broken recent-searches write must never fail
+ * the search response the user is actually waiting on.
+ */
+export function saveRecentSearchFromResponse(
+  db: Database.Database,
+  query: string,
+  response: SearchResponse,
+): boolean {
+  if (response.cancelled || response.results.length === 0) return false;
+  try {
+    upsertRecentSearch(db, query, {
+      results: response.results,
+      rewrittenQuery: response.rewrittenQuery,
+    });
+    return true;
+  } catch (err) {
+    console.error("Failed to save recent search:", err);
+    return false;
+  }
+}
+
 // --- Storage Stats ---
 
 export interface StorageStatsRow {
@@ -663,6 +862,7 @@ export function clearAllData(db: Database.Database): void {
       ...PRESERVED_SETTING_KEYS,
     );
     db.exec("DELETE FROM secrets");
+    db.exec("DELETE FROM recent_searches");
   });
   clear();
 }

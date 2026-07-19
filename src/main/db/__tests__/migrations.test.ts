@@ -188,6 +188,46 @@ describe("migration v7", () => {
   });
 });
 
+describe("migration v8", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createUnmigratedTestDb();
+    migrateTo(db, 7);
+  });
+  afterEach(() => db.close());
+
+  it("creates the recent_searches table", () => {
+    runMigrations(db);
+
+    const table = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='recent_searches'",
+      )
+      .get() as { name: string } | undefined;
+    expect(table?.name).toBe("recent_searches");
+    expect(currentVersion(db)).toBe(LATEST);
+  });
+
+  it("rejects a duplicate normalized_query via the unique index", () => {
+    runMigrations(db);
+
+    db.prepare(
+      `INSERT INTO recent_searches (id, query, normalized_query, response_json, result_count, created_at, updated_at)
+       VALUES ('r1', 'foo', 'foo', '{}', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`,
+    ).run();
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO recent_searches (id, query, normalized_query, response_json, result_count, created_at, updated_at)
+           VALUES ('r2', 'foo again', 'foo', '{}', 0, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`,
+        )
+        .run(),
+    ).toThrow(/UNIQUE constraint failed/);
+  });
+});
+
 describe("pre-migration backup", () => {
   let dir: string;
   let dbPath: string;
