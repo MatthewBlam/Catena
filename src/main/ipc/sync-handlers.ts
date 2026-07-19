@@ -164,6 +164,11 @@ export function broadcastSourcesChanged(): void {
   broadcast("sources:changed");
 }
 
+/** Tells every window that the recent-searches list is stale. */
+export function broadcastRecentsChanged(): void {
+  broadcast("recents:changed");
+}
+
 /** Progress for every sync running right now, for a renderer that just mounted. */
 export function getActiveSyncProgress(): SyncProgress[] {
   return [...activeSyncs.keys()].map(

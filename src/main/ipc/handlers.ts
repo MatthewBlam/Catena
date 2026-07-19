@@ -16,6 +16,11 @@ import {
   clearAllData,
   getEmbeddingHealth,
   getChunkCountByModel,
+  listRecentSearches,
+  getRecentSearchById,
+  deleteRecentSearch,
+  pruneExpiredRecentSearches,
+  saveRecentSearchFromResponse,
 } from "../db/database";
 import { search } from "../search/searcher";
 import { startNotionOAuth, cancelNotionOAuth } from "../auth/notion-oauth";
@@ -35,6 +40,7 @@ import {
   cancelAllSyncs,
   buildEmbedConfig,
   broadcastSourcesChanged,
+  broadcastRecentsChanged,
   getActiveSyncProgress,
 } from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
@@ -222,6 +228,12 @@ export function registerIpcHandlers(): void {
         embedding_provider: embedConfig.provider,
         duration_ms: Date.now() - startMs,
       });
+      if (
+        !controller.signal.aborted &&
+        saveRecentSearchFromResponse(db, query, response)
+      ) {
+        broadcastRecentsChanged();
+      }
       return response;
     } catch (err) {
       // Resolve rather than reject: an Error's `name` does not survive IPC, so a
@@ -244,6 +256,24 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("search:cancel", (event) => {
     activeSearches.get(event.sender.id)?.abort();
+  });
+
+  ipcMain.handle("recents:list", () => {
+    const db = getDb();
+    // Lazy prune: the list can never serve expired rows.
+    pruneExpiredRecentSearches(db);
+    return listRecentSearches(db);
+  });
+
+  ipcMain.handle("recents:get", (_, id: string) => {
+    if (!id) throw new Error("id is required");
+    return getRecentSearchById(getDb(), id);
+  });
+
+  ipcMain.handle("recents:delete", (_, id: string) => {
+    if (!id) throw new Error("id is required");
+    deleteRecentSearch(getDb(), id);
+    broadcastRecentsChanged();
   });
 
   ipcMain.handle("sources:list", () => {
@@ -352,6 +382,7 @@ export function registerIpcHandlers(): void {
     // Every source is gone. Not in the plan's list, but the renderer's copy of
     // `sources:list` is exactly as stale here as it is after a single removal.
     broadcastSourcesChanged();
+    broadcastRecentsChanged();
   });
 
   ipcMain.handle("embedding:health", () => {

@@ -19,6 +19,7 @@ import {
   resetStalePendingDocuments,
   getStorageStats,
   getSetting,
+  pruneExpiredRecentSearches,
 } from "./db/database";
 import { initTelemetry, track, shutdownTelemetry } from "./telemetry/posthog";
 
@@ -155,6 +156,10 @@ app
       console.log(
         `Reset ${staleCount} stale pending documents to error status`,
       );
+    }
+    const prunedRecentCount = pruneExpiredRecentSearches(db);
+    if (prunedRecentCount > 0) {
+      console.log(`Pruned ${prunedRecentCount} expired recent searches`);
     }
 
     initTelemetry(db);
