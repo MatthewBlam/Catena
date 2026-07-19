@@ -57,7 +57,12 @@ export function SearchPage({
   const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
   const readinessIdRef = useRef(0);
-  const lastRestoreTokenRef = useRef(0);
+  // Seeded from the mount-time prop, not 0: the effect below fires on token
+  // *change*, and a `restore` prop already present at mount (token >= 1,
+  // e.g. App handed back a stale prop across a SearchPage remount — wizard
+  // round-trip, ErrorBoundary reset) is not a change from this instance's
+  // perspective and must not be treated as a fresh restore request.
+  const lastRestoreTokenRef = useRef(restore?.token ?? 0);
 
   useEffect(() => {
     queryRef.current = query;

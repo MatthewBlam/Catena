@@ -813,8 +813,8 @@ export function saveRecentSearchFromResponse(
   query: string,
   response: SearchResponse,
 ): boolean {
-  if (response.cancelled || response.results.length === 0) return false;
   try {
+    if (response.cancelled || response.results.length === 0) return false;
     upsertRecentSearch(db, query, {
       results: response.results,
       rewrittenQuery: response.rewrittenQuery,

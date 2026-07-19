@@ -88,7 +88,16 @@ function App(): React.JSX.Element {
       .getOnboardingComplete()
       .then((onboarded) => {
         setReady(onboarded);
-        if (!onboarded) setVisited(new Set(["search"]));
+        if (!onboarded) {
+          setVisited(new Set(["search"]));
+          // A wizard return (e.g. Clear All Data wiped the onboarding flag,
+          // surfaced on the next provider-reset check) must drop the
+          // in-memory snapshot and list — otherwise a later SearchPage
+          // remount hands back a `restore` prop the user may have just
+          // wiped, and the sidebar shows recents that no longer exist.
+          setRestored(null);
+          setRecents([]);
+        }
       })
       .catch((err) => {
         console.error("Failed to check readiness:", err);
@@ -216,7 +225,7 @@ function App(): React.JSX.Element {
                         type="button"
                         onClick={() => handleSelectRecent(r.id)}
                         title={r.query}
-                        className="w-full rounded-lg px-3 py-1.5 pr-7 text-sm text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/24"
+                        className="w-full flex min-w-0 items-center rounded-lg px-3 py-1.5 pr-7 text-sm text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/24"
                       >
                         <span className="truncate">{r.query}</span>
                       </button>

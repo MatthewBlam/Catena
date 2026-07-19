@@ -363,7 +363,12 @@ describe("SearchPage — sources:changed debounce (F11)", () => {
 describe("SearchPage — restore mechanics", () => {
   it("renders a restored snapshot without calling search, and cancels any in-flight main-side work", async () => {
     mockApi({ hasCohereKey: true, sourceCount: 1 });
-    render(
+    // Mount without `restore` (App's own mount-time value), then rerender
+    // with it — matches how App actually delivers a restore: the prop
+    // arrives via a rerender of an already-mounted SearchPage, never at
+    // mount time.
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{ detail: RESTORE_DETAIL, token: 1 }}
@@ -380,9 +385,29 @@ describe("SearchPage — restore mechanics", () => {
     expect(window.api.cancelSearch).toHaveBeenCalled();
   });
 
-  it("shows the searched-as line when the snapshot carries a rewritten query", async () => {
+  it("does not hydrate a restore prop that is already present at mount (a stale prop surviving a SearchPage remount — wizard round-trip, ErrorBoundary reset — must not resurrect wiped data)", async () => {
     mockApi({ hasCohereKey: true, sourceCount: 1 });
     render(
+      <SearchPage
+        visible={true}
+        restore={{ detail: RESTORE_DETAIL, token: 1 }}
+      />,
+    );
+
+    // Let every mount-time effect (readiness, health, sources) settle.
+    await screen.findByLabelText("Search your documents");
+
+    expect(screen.queryByDisplayValue("reimbursement")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Saved results from/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Reimbursement Policy")).not.toBeInTheDocument();
+    expect(window.api.search).not.toHaveBeenCalled();
+    expect(window.api.cancelSearch).not.toHaveBeenCalled();
+  });
+
+  it("shows the searched-as line when the snapshot carries a rewritten query", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{
@@ -403,7 +428,8 @@ describe("SearchPage — restore mechanics", () => {
       sourceCount: 1,
       searchResponse: { results: [], rerankFailed: false },
     });
-    render(
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{ detail: RESTORE_DETAIL, token: 1 }}
@@ -431,7 +457,8 @@ describe("SearchPage — restore mechanics", () => {
       sourceCount: 1,
       searchResponse: { results: [], rerankFailed: false },
     });
-    render(
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{ detail: RESTORE_DETAIL, token: 1 }}
@@ -454,7 +481,8 @@ describe("SearchPage — restore mechanics", () => {
 
   it("disables Search again when the provider is not ready, while the snapshot keeps rendering", async () => {
     mockApi({ hasCohereKey: false, sourceCount: 1 });
-    render(
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{ detail: RESTORE_DETAIL, token: 1 }}
@@ -541,7 +569,8 @@ describe("SearchPage — restore mechanics", () => {
       },
     });
 
-    const { rerender } = render(
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{ detail: RESTORE_DETAIL, token: 1 }}
@@ -573,7 +602,8 @@ describe("SearchPage — restore mechanics", () => {
       sourceCount: 1,
       searchResponse: { results: [], rerankFailed: false },
     });
-    render(
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
       <SearchPage
         visible={true}
         restore={{ detail: RESTORE_DETAIL, token: 1 }}
