@@ -941,6 +941,19 @@ describe("recent searches", () => {
     ]);
   });
 
+  it("returns every stored row when no limit is given", () => {
+    for (let i = 0; i < 12; i++) {
+      upsertRecentSearch(
+        db,
+        `query-${i}`,
+        makeSnapshot(1),
+        new Date(Date.UTC(2024, 0, 1, 0, 0, i)).toISOString(),
+      );
+    }
+
+    expect(listRecentSearches(db)).toHaveLength(12);
+  });
+
   it("caps at 50 rows, evicting the oldest on the 51st distinct query", () => {
     for (let i = 0; i < 51; i++) {
       upsertRecentSearch(

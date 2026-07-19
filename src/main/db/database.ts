@@ -726,7 +726,7 @@ export function upsertRecentSearch(
 /** Light rows for the recents list — no response_json, so no snapshot cost for a list nobody expanded. */
 export function listRecentSearches(
   db: Database.Database,
-  limit = 10,
+  limit?: number,
 ): RecentSearch[] {
   const rows = db
     .prepare(
@@ -735,7 +735,8 @@ export function listRecentSearches(
        ORDER BY updated_at DESC
        LIMIT ?`,
     )
-    .all(limit) as Pick<
+    // LIMIT -1 is SQLite's "no limit"; the 50-row cap bounds the table anyway.
+    .all(limit ?? -1) as Pick<
     RecentSearchDbRow,
     "id" | "query" | "result_count" | "created_at" | "updated_at"
   >[];
