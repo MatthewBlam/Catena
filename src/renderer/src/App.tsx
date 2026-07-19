@@ -7,7 +7,6 @@ import { SettingsPage } from "@renderer/pages/SettingsPage";
 import { ErrorBoundary } from "@renderer/components/ui/ErrorBoundary";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { cn } from "@renderer/lib/utils";
-import { getOllamaStatus } from "@renderer/lib/ollama";
 
 function DragRegion({ className }: { className?: string }): React.JSX.Element {
   const rafRef = useRef(0);
@@ -70,28 +69,19 @@ function App(): React.JSX.Element {
   }, [dark]);
 
   const checkReady = useCallback((): void => {
-    Promise.all([
-      window.api.getOnboardingComplete(),
-      window.api.getEmbeddingProvider(),
-    ])
-      .then(async ([onboarded, provider]) => {
-        // A configured provider is necessary but not sufficient: validating a
-        // Cohere key writes the secret immediately, so a user who quit mid-wizard
-        // would otherwise be waved straight onto Search, never seeing "Connect
-        // your docs." Require the explicit completion flag too.
-        //
-        // Ollama being the *chosen* provider likewise does not mean it is
-        // installed and running — check availability rather than trust the
-        // setting, or a configured-but-absent Ollama yields raw fetch errors on
-        // every search. hasSecret (not loadSecret) keeps the plaintext key out
-        // of renderer memory for a yes/no question.
-        const providerReady =
-          provider === "ollama"
-            ? (await getOllamaStatus()).available
-            : await window.api.hasSecret("cohere_api_key");
-        const isReady = onboarded && providerReady;
-        setReady(isReady);
-        if (!isReady) setVisited(new Set(["search"]));
+    // The wizard gates on the completion flag ONLY — not on provider
+    // readiness. An onboarded user whose current provider is unconfigured
+    // (switched to Cohere with no key stored, Ollama stopped) stays in the
+    // app: Settings holds the key form and SearchPage renders its own
+    // disabled state. Gating on provider readiness here dumped exactly those
+    // users into the wizard, contradicting the M12 keep-them-in-app behavior
+    // on key removal. The flag alone still keeps a quit-mid-wizard install
+    // (which may already hold a validated key) in onboarding.
+    window.api
+      .getOnboardingComplete()
+      .then((onboarded) => {
+        setReady(onboarded);
+        if (!onboarded) setVisited(new Set(["search"]));
       })
       .catch((err) => {
         console.error("Failed to check readiness:", err);

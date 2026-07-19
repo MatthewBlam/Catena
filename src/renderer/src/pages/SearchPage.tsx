@@ -210,7 +210,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
           onChange={setQuery}
           onSubmit={() => handleSearch()}
           loading={loading}
-          disabled={providerReady === false}
+          disabled={providerReady === false || sourceCount === 0}
         />
       </div>
 
@@ -221,8 +221,8 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
         {providerReady === false && (
           <ErrorBanner variant="warning">
             {embeddingProvider === "ollama"
-              ? "Search is disabled — start Ollama to search"
-              : "Search is disabled — add your API key in Settings"}
+              ? "Search is disabled — start Ollama to search."
+              : "Search is disabled — add your API key in Settings."}
           </ErrorBanner>
         )}
 

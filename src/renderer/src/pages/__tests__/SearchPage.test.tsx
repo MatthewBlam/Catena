@@ -99,7 +99,7 @@ describe("SearchPage — provider readiness", () => {
 
     expect(
       await screen.findByText(
-        "Search is disabled — add your API key in Settings",
+        "Search is disabled — add your API key in Settings.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Search your documents")).toBeDisabled();
@@ -110,7 +110,7 @@ describe("SearchPage — provider readiness", () => {
     render(<SearchPage visible={true} />);
 
     expect(
-      await screen.findByText("Search is disabled — start Ollama to search"),
+      await screen.findByText("Search is disabled — start Ollama to search."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Search your documents")).toBeDisabled();
   });
@@ -118,6 +118,7 @@ describe("SearchPage — provider readiness", () => {
   it("renders a normal, enabled search when the provider is ready", async () => {
     mockApi({
       hasCohereKey: true,
+      sourceCount: 1,
       searchResponse: {
         results: [
           {
@@ -138,7 +139,7 @@ describe("SearchPage — provider readiness", () => {
     // Let the readiness check resolve before asserting its absence.
     await screen.findByLabelText("Search your documents");
     expect(
-      screen.queryByText("Search is disabled — add your API key in Settings"),
+      screen.queryByText("Search is disabled — add your API key in Settings."),
     ).not.toBeInTheDocument();
     const input = screen.getByLabelText("Search your documents");
     expect(input).not.toBeDisabled();
@@ -150,13 +151,31 @@ describe("SearchPage — provider readiness", () => {
     expect(window.api.search).toHaveBeenCalledWith("reimbursement");
   });
 
+  it("disables the search input while no sources are connected, and re-enables when one is added", async () => {
+    // Provider fully ready — the only thing missing is a connected source.
+    const { state, fireSourcesChanged } = mockApi({ hasCohereKey: true });
+    render(<SearchPage visible={true} />);
+
+    const input = await screen.findByLabelText("Search your documents");
+    await waitFor(() => {
+      expect(input).toBeDisabled();
+    });
+
+    state.sourceCount = 1;
+    fireSourcesChanged();
+
+    await waitFor(() => {
+      expect(input).not.toBeDisabled();
+    });
+  });
+
   it("re-evaluates readiness when the page becomes visible again (returning from Settings)", async () => {
-    const { state } = mockApi({ hasCohereKey: false });
+    const { state } = mockApi({ hasCohereKey: false, sourceCount: 1 });
     const { rerender } = render(<SearchPage visible={true} />);
 
     expect(
       await screen.findByText(
-        "Search is disabled — add your API key in Settings",
+        "Search is disabled — add your API key in Settings.",
       ),
     ).toBeInTheDocument();
 
@@ -171,17 +190,20 @@ describe("SearchPage — provider readiness", () => {
       await screen.findByLabelText("Search your documents"),
     ).not.toBeDisabled();
     expect(
-      screen.queryByText("Search is disabled — add your API key in Settings"),
+      screen.queryByText("Search is disabled — add your API key in Settings."),
     ).not.toBeInTheDocument();
   });
 
   it("re-evaluates readiness on a sources:changed event", async () => {
-    const { state, fireSourcesChanged } = mockApi({ hasCohereKey: false });
+    const { state, fireSourcesChanged } = mockApi({
+      hasCohereKey: false,
+      sourceCount: 1,
+    });
     render(<SearchPage visible={true} />);
 
     expect(
       await screen.findByText(
-        "Search is disabled — add your API key in Settings",
+        "Search is disabled — add your API key in Settings.",
       ),
     ).toBeInTheDocument();
 
@@ -209,14 +231,14 @@ describe("SearchPage — provider readiness", () => {
 
     expect(
       await screen.findByText(
-        "Search is disabled — add your API key in Settings",
+        "Search is disabled — add your API key in Settings.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Search your documents")).toBeDisabled();
   });
 
   it("leaves a known-good readiness state alone on a later transient IPC failure", async () => {
-    mockApi({ hasCohereKey: true });
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
     const { rerender } = render(<SearchPage visible={true} />);
 
     // Establish a real (non-null) ready state first.
@@ -235,7 +257,7 @@ describe("SearchPage — provider readiness", () => {
 
     expect(screen.getByLabelText("Search your documents")).not.toBeDisabled();
     expect(
-      screen.queryByText("Search is disabled — add your API key in Settings"),
+      screen.queryByText("Search is disabled — add your API key in Settings."),
     ).not.toBeInTheDocument();
   });
 
@@ -250,7 +272,7 @@ describe("SearchPage — provider readiness", () => {
 
     expect(
       await screen.findByText(
-        "Search is disabled — add your API key in Settings",
+        "Search is disabled — add your API key in Settings.",
       ),
     ).toBeInTheDocument();
 
