@@ -97,6 +97,18 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 - [ ] If documents were embedded with a different model than the current provider, a dismissible warning appears
 - [ ] Dismissing the warning hides it for the session
 
+### Recents
+
+- [ ] Search with results appears under "Recents"; zero-result search does not
+- [ ] Same query re-run (any casing/whitespace) → single entry moves to top, no duplicate
+- [ ] Clicking a recent shows saved results instantly with the "Saved results from …" banner (works with Ollama stopped / offline)
+- [ ] "Search again" re-runs live; banner disappears
+- [ ] Provider stopped → recent still opens read-only, "Search again" disabled
+- [ ] Hover reveals X; clicking removes the entry; section disappears when empty
+- [ ] Clear all data empties Recents immediately
+- [ ] Entry older than 7 days is gone after relaunch
+- [ ] Long queries truncate with full text on hover; short window scrolls the list without pushing the logo out
+
 ---
 
 ## 4. Sources
