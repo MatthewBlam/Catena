@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { SearchIcon, FolderSyncIcon, SettingsIcon } from "lucide-react";
+import { SearchIcon, FolderSyncIcon, SettingsIcon, XIcon } from "lucide-react";
 import { OnboardingWizard } from "@renderer/components/setup/OnboardingWizard";
 import { SearchPage } from "@renderer/pages/SearchPage";
 import { SourcesPage } from "@renderer/pages/SourcesPage";
@@ -7,6 +7,7 @@ import { SettingsPage } from "@renderer/pages/SettingsPage";
 import { ErrorBoundary } from "@renderer/components/ui/ErrorBoundary";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { cn } from "@renderer/lib/utils";
+import type { RecentSearch, RecentSearchDetail } from "../../shared/types";
 
 function DragRegion({ className }: { className?: string }): React.JSX.Element {
   const rafRef = useRef(0);
@@ -62,6 +63,12 @@ function App(): React.JSX.Element {
   const [page, setPage] = useState<Page>("search");
   const [dark, setDark] = useState(getInitialDark);
   const [visited, setVisited] = useState<Set<Page>>(() => new Set(["search"]));
+  const [recents, setRecents] = useState<RecentSearch[]>([]);
+  const [restored, setRestored] = useState<{
+    detail: RecentSearchDetail;
+    token: number;
+  } | null>(null);
+  const restoreTokenRef = useRef(0);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -110,6 +117,46 @@ function App(): React.JSX.Element {
     });
   }, []);
 
+  const refreshRecents = useCallback(() => {
+    window.api
+      .listRecentSearches()
+      .then(setRecents)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    refreshRecents();
+    const unsubscribe = window.api.onRecentsChanged(refreshRecents);
+    return unsubscribe;
+  }, [ready, refreshRecents]);
+
+  const handleSelectRecent = useCallback(
+    (id: string) => {
+      window.api
+        .getRecentSearch(id)
+        .then((detail) => {
+          if (!detail) {
+            // Expired or deleted since the list was fetched — treat as gone,
+            // not an error. Refetch so the sidebar drops the stale entry.
+            refreshRecents();
+            return;
+          }
+          restoreTokenRef.current += 1;
+          setRestored({ detail, token: restoreTokenRef.current });
+          handlePageChange("search");
+        })
+        .catch(() => {});
+    },
+    [refreshRecents, handlePageChange],
+  );
+
+  const handleDeleteRecent = useCallback((id: string) => {
+    // No confirm() — low-stakes, unlike source removal. The recents:changed
+    // broadcast this triggers refreshes the list.
+    window.api.deleteRecentSearch(id).catch(() => {});
+  }, []);
+
   if (ready === null)
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -137,24 +184,55 @@ function App(): React.JSX.Element {
       <div className="w-54 shrink-0 p-3 flex flex-col">
         <nav className="h-full bg-sidebar rounded-xl p-2 flex flex-col border border-border">
           <DragRegion className="h-8 shrink-0" />
-          <div className="flex-1 space-y-0.5">
-            {NAV_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handlePageChange(item.id)}
-                aria-current={page === item.id ? "page" : undefined}
-                className={cn(
-                  "w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/24",
-                  page === item.id
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/50",
-                )}
-              >
-                <item.icon className="size-4 opacity-60" />
-                {item.label}
-              </button>
-            ))}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="shrink-0 space-y-0.5">
+              {NAV_ITEMS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handlePageChange(item.id)}
+                  aria-current={page === item.id ? "page" : undefined}
+                  className={cn(
+                    "w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/24",
+                    page === item.id
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/50",
+                  )}
+                >
+                  <item.icon className="size-4 opacity-60" />
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            {recents.length > 0 && (
+              <>
+                <div className="mt-4 px-3 pb-1 text-xs font-medium text-sidebar-foreground/60">
+                  Recents
+                </div>
+                <div className="min-h-0 overflow-y-auto space-y-0.5">
+                  {recents.map((r) => (
+                    <div key={r.id} className="group relative">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectRecent(r.id)}
+                        title={r.query}
+                        className="w-full rounded-lg px-3 py-1.5 pr-7 text-sm text-sidebar-foreground outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/24"
+                      >
+                        <span className="truncate">{r.query}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRecent(r.id)}
+                        aria-label={`Remove "${r.query}" from recents`}
+                        className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded p-0.5 text-sidebar-foreground/60 outline-none transition-colors hover:text-sidebar-foreground focus-visible:ring-[3px] focus-visible:ring-ring/24 group-hover:block group-focus-within:block"
+                      >
+                        <XIcon className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center justify-center gap-1 pb-2">
             <svg
@@ -177,7 +255,7 @@ function App(): React.JSX.Element {
         <main className="flex-1 min-h-0 overflow-y-auto pr-3">
           <ErrorBoundary resetKeys={[page]}>
             <div style={{ display: page === "search" ? undefined : "none" }}>
-              <SearchPage visible={page === "search"} />
+              <SearchPage visible={page === "search"} restore={restored} />
             </div>
           </ErrorBoundary>
           {visited.has("sources") && (
