@@ -13,7 +13,7 @@ export const ResultCard = memo(function ResultCard({
 }: ResultCardProps): React.JSX.Element {
   const snippet =
     result.snippet.length > 200
-      ? result.snippet.slice(0, 200) + "..."
+      ? result.snippet.slice(0, 200) + "…"
       : result.snippet;
 
   return (

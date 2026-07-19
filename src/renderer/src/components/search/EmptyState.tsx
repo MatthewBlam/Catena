@@ -15,7 +15,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center py-16">
       <p className="text-muted-foreground mb-6">
-        Try searching your synced docs
+        Try searching your synced docs.
       </p>
       <div className="grid grid-cols-2 gap-2 max-w-sm">
         {EXAMPLE_QUESTIONS.map((q) => (

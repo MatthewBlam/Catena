@@ -39,7 +39,7 @@ export function NotionPicker({
       })
       .catch((err: unknown) => {
         if (!cancelRef.current) {
-          const msg = toErrorMessage(err, "Failed to load Notion pages");
+          const msg = toErrorMessage(err, "Failed to load Notion pages.");
           setError(authAwareMessage(msg));
         }
       })
@@ -128,7 +128,7 @@ export function NotionPicker({
         <Input
           type="search"
           size="sm"
-          placeholder="Filter..."
+          placeholder="Filter"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="pl-5.5"
@@ -170,7 +170,7 @@ export function NotionPicker({
           }
           emptyState={
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {searchQuery ? "No results found" : "No pages found"}
+              {searchQuery ? "No results found." : "No pages found."}
             </p>
           }
           renderItem={(item, index) => (

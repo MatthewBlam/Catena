@@ -102,7 +102,7 @@ export function SyncPanel({
         // "error" unconditionally would flash "Sync canceled" then an abort
         // failure over it.
         if (statusRef.current !== "syncing") return;
-        setError(toErrorMessage(err, "Sync failed"));
+        setError(toErrorMessage(err, "Sync failed."));
         setStatus("error");
       });
   }, [sourceId, autoStart]);

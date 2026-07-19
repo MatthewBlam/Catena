@@ -33,7 +33,7 @@ export function ConnectNotionButton({
       await window.api.startNotionOAuth();
       setStep("pick");
     } catch (err) {
-      const msg = toErrorMessage(err, "Failed to connect to Notion");
+      const msg = toErrorMessage(err, "Failed to connect to Notion.");
       if (msg === "OAuth canceled") {
         setStep("idle");
       } else {
@@ -60,7 +60,7 @@ export function ConnectNotionButton({
     const failures = results.filter((r) => r.status === "rejected");
     if (failures.length > 0) {
       setError(
-        `Failed to add ${failures.length} of ${selections.length} source${selections.length !== 1 ? "s" : ""}`,
+        `Failed to add ${failures.length} of ${selections.length} source${selections.length !== 1 ? "s" : ""}.`,
       );
     }
     if (failures.length < selections.length) {

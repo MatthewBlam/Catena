@@ -375,7 +375,7 @@ export function SourceList({
       const names = failed.map(
         (id) => sources.find((s) => s.id === id)?.name ?? id,
       );
-      setError(`Failed to remove: ${names.join(", ")}`);
+      setError(`Failed to remove: ${names.join(", ")}.`);
     }
     onRefreshRef.current();
     setBulkRemoving(false);
@@ -429,7 +429,7 @@ export function SourceList({
   if (sources.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
-        Add a source above to get started
+        Add a source above to get started.
       </p>
     );
   }
@@ -497,7 +497,7 @@ export function SourceList({
         <Input
           type="search"
           size="sm"
-          placeholder="Filter sources..."
+          placeholder="Filter sources"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="pl-5.5"
@@ -621,7 +621,7 @@ export function SourceList({
                   }
                   emptyState={
                     <p className="text-xs text-muted-foreground py-3 text-center">
-                      No documents synced
+                      No documents synced.
                     </p>
                   }
                   renderItem={(doc, index) => (

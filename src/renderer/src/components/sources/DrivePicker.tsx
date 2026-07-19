@@ -76,7 +76,7 @@ export function DrivePicker({
       setItems(result);
     } catch (err) {
       if (!mountedRef.current || id !== requestIdRef.current) return;
-      const msg = toErrorMessage(err, "Failed to load Drive items");
+      const msg = toErrorMessage(err, "Failed to load Drive items.");
       setError(authAwareMessage(msg));
     } finally {
       if (mountedRef.current && id === requestIdRef.current) setLoading(false);
@@ -191,7 +191,7 @@ export function DrivePicker({
         <Input
           type="search"
           size="sm"
-          placeholder="Filter..."
+          placeholder="Filter"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="pl-5.5"
@@ -233,7 +233,7 @@ export function DrivePicker({
           }
           emptyState={
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {searchQuery ? "No results found" : "This folder is empty."}
+              {searchQuery ? "No results found." : "This folder is empty."}
             </p>
           }
           renderItem={(item, index) => {

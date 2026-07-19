@@ -39,7 +39,7 @@ export function ApiKeyForm({ onSuccess }: ApiKeyFormProps): React.JSX.Element {
         <Input
           id="cohere-key"
           type="password"
-          placeholder="Paste your API key..."
+          placeholder="Paste your API key"
           value={apiKey}
           onChange={(e) => {
             setApiKey(e.target.value);

@@ -28,7 +28,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 - [ ] Back arrow returns to the provider choice
 - [ ] Pasting an invalid key and submitting shows an error message
 - [ ] Pasting a valid key shows a green success message and advances
-- [ ] "Get an API key" link opens `dashboard.cohere.com` in the default browser
+- [ ] The "dashboard.cohere.com" link ("Get a free API key at …") opens in the default browser
 
 ### Provider Step -- Ollama
 
@@ -67,13 +67,13 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 
 ### Empty State
 
-- [ ] Shows "Try searching your synced docs" with 4 example question cards
+- [ ] Shows "Try searching your synced docs." with 4 example question cards
 - [ ] Clicking an example card fills the input and triggers a search
 
 ### Search Input
 
 - [ ] Input is auto-focused on mount
-- [ ] Placeholder reads "Ask a question..."
+- [ ] Placeholder reads "Ask a question"
 - [ ] Pressing Enter with text triggers search
 - [ ] Pressing Enter with empty input does nothing
 - [ ] Pressing Enter while loading does nothing
@@ -88,7 +88,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 
 ### Edge Cases
 
-- [ ] Searching with no synced documents returns "No results found"
+- [ ] Searching with no synced documents returns "No results found."
 - [ ] Searching with a very long query does not crash
 - [ ] Network failure during Cohere reranking shows "Reranking unavailable" warning but still returns results
 
@@ -105,42 +105,34 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 
 - [ ] Clicking "Connect Notion" opens the Notion OAuth page in the default browser
 - [ ] Completing OAuth in the browser returns focus to the app
-- [ ] Browser shows "Connected to Notion! You can close this tab."
+- [ ] Browser shows "Connected to Notion! You can close this tab and return to Commons."
 - [ ] App transitions to the Notion page picker (page list)
-
-### Connect Notion (Token Paste)
-
-- [ ] "Or paste an integration token" link shows the token input
-- [ ] Pasting a token and clicking "Save token" saves it
-- [ ] "Cancel" returns to the idle state
 
 ### Notion Page Picker
 
-- [ ] Page list loads automatically after OAuth or token paste (spinner while loading)
+- [ ] Page list loads automatically after OAuth (spinner while loading)
 - [ ] Pages granted during authorization are shown with emoji icon and title
 - [ ] Pages without an emoji show a file icon
-- [ ] Empty list shows "No pages found" with guidance about granting access
-- [ ] API error shows an error banner with a Cancel button
-- [ ] Clicking a page selects it and pre-fills the source name
-- [ ] Source name is editable before submitting
-- [ ] "Back" returns to the page list
-- [ ] "Add source" creates the source and refreshes the list
-- [ ] "Cancel" returns to the idle state at any point
+- [ ] Empty list shows "No pages found."
+- [ ] Filter narrows the list (placeholder "Filter"); no matches shows "No results found."
+- [ ] API error shows an error banner with a Retry button
+- [ ] Checking pages updates the "Add {n} source(s)" button label
+- [ ] "Add sources" creates the selected sources and refreshes the list
+- [ ] "Close" returns to the idle state at any point
 
 ### Connect Google Drive (OAuth)
 
 - [ ] Clicking "Connect Google Drive" opens the Google OAuth page in the default browser
 - [ ] Completing OAuth in the browser returns focus to the app
-- [ ] Browser shows "Connected to Google Drive! You can close this tab."
+- [ ] Browser shows "Connected to Google Drive! You can close this tab and return to Commons."
 - [ ] App shows the Drive folder picker with the authenticated email
 
 ### Drive Folder Picker
 
-- [ ] Source name input accepts text (placeholder "e.g. Club Drive")
-- [ ] Pasting a valid Drive folder URL extracts the folder ID
-- [ ] Pasting an invalid URL shows "Could not extract a folder ID" error
-- [ ] "Add source" creates the source and refreshes the list
-- [ ] Labels are properly associated with inputs (click label focuses input)
+- [ ] Folder contents load with breadcrumbs (root "My Drive"); navigating into a folder and back works
+- [ ] Filter narrows the list (placeholder "Filter"); no matches shows "No results found."; an empty folder shows "This folder is empty."
+- [ ] Checking folders updates the "Add {n} source(s)" button label
+- [ ] "Add sources" creates the selected sources and refreshes the list
 
 ### Source List
 
@@ -177,13 +169,13 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 ### Cancellation
 
 - [ ] "Cancel" button stops the sync
-- [ ] Panel shows "Sync canceled" with a "Done" button
+- [ ] Panel shows "Sync canceled" with a "Canceled" footer and a "Dismiss" button
 - [ ] Partial data from the sync is preserved
 
 ### Completion
 
-- [ ] Panel shows "Sync complete" with a "Done" button
-- [ ] Document count in the source list updates after closing the panel
+- [ ] Panel shows "Sync complete", then auto-dismisses ("Dismissing…")
+- [ ] Document count in the source list updates after the panel dismisses
 
 ### Error Handling
 
@@ -243,7 +235,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 ## 8. External Links
 
 - [ ] "Open source" on a result card opens the URL in the default browser (not in the Electron window)
-- [ ] "Get an API key" link opens Cohere dashboard externally
+- [ ] The "dashboard.cohere.com" link opens the Cohere dashboard externally
 - [ ] Ollama install link opens `ollama.com` externally
 - [ ] All external links use `window.api.openExternal` (http/https only)
 

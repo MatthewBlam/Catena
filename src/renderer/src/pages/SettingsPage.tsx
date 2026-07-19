@@ -219,8 +219,10 @@ export function SettingsPage({
       setProvider(newProvider);
       // H12: re-evaluate readiness in BOTH directions. Switching to a provider
       // that is not configured (Ollama not installed, or Cohere with no key)
-      // must route the user to set it up, not leave `ready` stale so every
-      // search fails silently at the embedder.
+      // must not leave stale readiness state so every search fails silently at
+      // the embedder. The user stays in the app either way — App's wizard
+      // gates on onboarding only, and SearchPage re-checks provider readiness
+      // itself and renders its disabled state until the provider is set up.
       onProviderReset();
     } catch {
       setLoadError("Failed to switch provider.");
@@ -320,7 +322,7 @@ export function SettingsPage({
     <div className="max-w-3xl mx-auto px-10 pt-3 pb-8">
       <h1 className="text-2xl font-semibold mb-1">Settings</h1>
       <p className="text-muted-foreground text-sm mb-6">
-        Manage your embedding provider and app data
+        Manage your embedding provider and app data.
       </p>
 
       {loadError && (

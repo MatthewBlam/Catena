@@ -28,7 +28,7 @@ export function SearchInput({
       </div>
       <Input
         type="search"
-        placeholder="Ask a question..."
+        placeholder="Ask a question"
         aria-label="Search your documents"
         value={value}
         onChange={(e) => onChange((e.target as HTMLInputElement).value)}
