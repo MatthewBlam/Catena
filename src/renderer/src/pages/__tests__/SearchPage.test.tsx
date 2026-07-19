@@ -421,6 +421,37 @@ describe("SearchPage — restore mechanics", () => {
     });
   });
 
+  it("Search again uses the saved query, not a live edit to the input", async () => {
+    // Guards `handleSearch(lastQuery)` at the "Search again" callsite — every
+    // other restore test clicks it while the input still equals the saved
+    // query, so a regression to a bare `handleSearch()` (which falls back to
+    // the live input via `queryRef.current`) would pass them undetected.
+    mockApi({
+      hasCohereKey: true,
+      sourceCount: 1,
+      searchResponse: { results: [], rerankFailed: false },
+    });
+    render(
+      <SearchPage
+        visible={true}
+        restore={{ detail: RESTORE_DETAIL, token: 1 }}
+      />,
+    );
+    await screen.findByText(/^Saved results from/);
+
+    const input = screen.getByLabelText("Search your documents");
+    fireEvent.change(input, { target: { value: "something else entirely" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Search again" }));
+
+    await waitFor(() => {
+      expect(window.api.search).toHaveBeenCalledWith("reimbursement");
+    });
+    expect(window.api.search).not.toHaveBeenCalledWith(
+      "something else entirely",
+    );
+  });
+
   it("disables Search again when the provider is not ready, while the snapshot keeps rendering", async () => {
     mockApi({ hasCohereKey: false, sourceCount: 1 });
     render(
