@@ -258,7 +258,7 @@ export function SearchPage({
         aria-live="polite"
       >
         {restoredAt && !loading && (
-          <ErrorBanner variant="info">
+          <ErrorBanner variant="info" className="items-center [&>svg]:mt-0">
             <div className="flex items-center justify-between gap-3">
               <span>Saved results from {formatRelativeTime(restoredAt)}.</span>
               <Button
