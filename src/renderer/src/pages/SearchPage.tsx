@@ -3,16 +3,27 @@ import { SearchInput } from "@renderer/components/search/SearchInput";
 import { ResultCard } from "@renderer/components/search/ResultCard";
 import { EmptyState } from "@renderer/components/search/EmptyState";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { Button } from "@renderer/components/ui/button";
 import { getOllamaStatus } from "@renderer/lib/ollama";
 import { debounce } from "@renderer/lib/utils";
 import { toErrorMessage } from "@renderer/lib/errors";
-import type { SearchResult, EmbeddingHealth } from "../../../shared/types";
+import { formatRelativeTime } from "@renderer/lib/format";
+import type {
+  SearchResult,
+  EmbeddingHealth,
+  RecentSearchDetail,
+} from "../../../shared/types";
 
 interface SearchPageProps {
   visible: boolean;
+  /** Token is monotonic: restoring the same entry twice must re-fire the effect. */
+  restore?: { detail: RecentSearchDetail; token: number } | null;
 }
 
-export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
+export function SearchPage({
+  visible,
+  restore,
+}: SearchPageProps): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const [lastRewritten, setLastRewritten] = useState<string | null>(null);
@@ -28,6 +39,9 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     scanned: number;
     total: number;
   } | null>(null);
+  // non-null = snapshot mode; holds the restored entry's `updatedAt` for the
+  // "Saved results from…" banner.
+  const [restoredAt, setRestoredAt] = useState<string | null>(null);
   // null = not yet loaded (show the suggested-questions empty state, not the
   // "connect a source" one — otherwise it flashes on every mount).
   const [sourceCount, setSourceCount] = useState<number | null>(null);
@@ -43,6 +57,7 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
   const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
   const readinessIdRef = useRef(0);
+  const lastRestoreTokenRef = useRef(0);
 
   useEffect(() => {
     queryRef.current = query;
@@ -145,6 +160,23 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    if (!restore || restore.token === lastRestoreTokenRef.current) return;
+    lastRestoreTokenRef.current = restore.token;
+    requestIdRef.current += 1; // supersede any in-flight live search
+    window.api.cancelSearch().catch(() => {}); // and abort its main-side work
+    const d = restore.detail;
+    setQuery(d.query);
+    setLastQuery(d.query);
+    setLastRewritten(d.rewrittenQuery ?? null);
+    setResults(d.results);
+    setLoading(false); // load-bearing: the superseded search's finally skips it
+    setError(null);
+    setRerankFailed(false);
+    setTruncated(null);
+    setRestoredAt(d.updatedAt);
+  }, [restore]);
+
   const handleSearch = useCallback(async (searchQuery?: string) => {
     const q = (searchQuery ?? queryRef.current).trim();
     // F7: belt-and-suspenders alongside the disabled input — the empty-state's
@@ -158,6 +190,8 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
     setError(null);
     setRerankFailed(false);
     setTruncated(null);
+    // Any live search, including "Search again", exits snapshot mode.
+    setRestoredAt(null);
 
     const id = ++requestIdRef.current;
 
@@ -218,6 +252,22 @@ export function SearchPage({ visible }: SearchPageProps): React.JSX.Element {
         className="w-full max-w-3xl mx-auto px-10 flex-1 space-y-3"
         aria-live="polite"
       >
+        {restoredAt && !loading && (
+          <ErrorBanner variant="info">
+            <div className="flex items-center justify-between gap-3">
+              <span>Saved results from {formatRelativeTime(restoredAt)}.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={providerReady === false || sourceCount === 0}
+                onClick={() => handleSearch(lastQuery)}
+              >
+                Search again
+              </Button>
+            </div>
+          </ErrorBanner>
+        )}
+
         {providerReady === false && (
           <ErrorBanner variant="warning">
             {embeddingProvider === "ollama"
