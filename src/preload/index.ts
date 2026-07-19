@@ -101,6 +101,23 @@ const api = {
     ipcRenderer.invoke("settings:get-onboarding-complete"),
   setOnboardingComplete: (): Promise<void> =>
     ipcRenderer.invoke("settings:set-onboarding-complete"),
+  listRecentSearches: (): Promise<import("../shared/types").RecentSearch[]> =>
+    ipcRenderer.invoke("recents:list"),
+  getRecentSearch: (
+    id: string,
+  ): Promise<import("../shared/types").RecentSearchDetail | null> =>
+    ipcRenderer.invoke("recents:get", id),
+  deleteRecentSearch: (id: string): Promise<void> =>
+    ipcRenderer.invoke("recents:delete", id),
+  onRecentsChanged: (callback: () => void): (() => void) => {
+    const handler = (): void => {
+      callback();
+    };
+    ipcRenderer.on("recents:changed", handler);
+    return () => {
+      ipcRenderer.removeListener("recents:changed", handler);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);

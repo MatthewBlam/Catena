@@ -55,6 +55,19 @@ interface CommonsAPI {
   getOnboardingComplete(): Promise<boolean>;
   /** Marks onboarding finished. Write-once; there is no un-complete. */
   setOnboardingComplete(): Promise<void>;
+  listRecentSearches(): Promise<import("../shared/types").RecentSearch[]>;
+  /**
+   * Get a recent search by ID. Returns null if the result has expired or been
+   * deleted; treat this as if the search is gone, not an error.
+   */
+  getRecentSearch(
+    id: string,
+  ): Promise<import("../shared/types").RecentSearchDetail | null>;
+  deleteRecentSearch(id: string): Promise<void>;
+  /**
+   * Fires when the recents list has gone stale. Refetch; do not infer.
+   */
+  onRecentsChanged(callback: () => void): () => void;
 }
 
 interface ElectronDrag {
