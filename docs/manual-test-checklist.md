@@ -142,6 +142,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 ### Drive Folder Picker
 
 - [ ] Folder contents load with breadcrumbs (root "My Drive"); navigating into a folder and back works
+- [ ] 5+ levels deep: trail collapses to "My Drive › … › parent › current"; clicking "…" expands the full trail; long folder names truncate with the full name on hover
 - [ ] Filter narrows the list (placeholder "Filter"); no matches shows "No results found."; an empty folder shows "This folder is empty."
 - [ ] Checking folders updates the "Add {n} source(s)" button label
 - [ ] "Add sources" creates the selected sources and refreshes the list

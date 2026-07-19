@@ -38,6 +38,7 @@ export function DrivePicker({
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([
     { id: "root", name: "My Drive" },
   ]);
+  const [trailExpanded, setTrailExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // A monotonic request id, not a single boolean: navigating A (slow) then B
   // (fast) must not let A's late response clobber B's contents while the
@@ -96,12 +97,14 @@ export function DrivePicker({
 
   function navigateInto(folder: DriveItemSummary): void {
     setSearchQuery("");
+    setTrailExpanded(false);
     setBreadcrumbs((prev) => [...prev, { id: folder.id, name: folder.name }]);
     void fetchFolder(folder.id);
   }
 
   function navigateTo(index: number): void {
     setSearchQuery("");
+    setTrailExpanded(false);
     setBreadcrumbs((prev) => prev.slice(0, index + 1));
     const targetId = breadcrumbs[index].id;
     void fetchFolder(targetId);
@@ -181,6 +184,22 @@ export function DrivePicker({
       </div>
     );
   }
+
+  // Deep trails collapse to "root › … › parent › current" so the current
+  // folder stays visible without scrolling; "…" expands the full trail, and
+  // every hidden level remains reachable by walking back through the parent.
+  const collapsed = !trailExpanded && breadcrumbs.length > 4;
+  const trail: Array<{ crumb: Breadcrumb; index: number } | "ellipsis"> =
+    collapsed
+      ? [
+          { crumb: breadcrumbs[0], index: 0 },
+          "ellipsis",
+          ...breadcrumbs.slice(-2).map((crumb, i) => ({
+            crumb,
+            index: breadcrumbs.length - 2 + i,
+          })),
+        ]
+      : breadcrumbs.map((crumb, index) => ({ crumb, index }));
 
   return (
     <div className="space-y-3">
@@ -273,18 +292,34 @@ export function DrivePicker({
       </div>
 
       <div className="-ml-1 -mt-1.5 flex items-center gap-0.5 text-xs text-muted-foreground overflow-x-auto">
-        {breadcrumbs.map((crumb, i) => (
-          <Fragment key={crumb.id}>
-            {i > 0 && <ChevronRightIcon className="size-3 shrink-0" />}
-            <button
-              type="button"
-              onClick={() => navigateTo(i)}
-              className={`shrink-0 rounded px-1 py-0.5 hover:text-foreground transition-colors ${i === breadcrumbs.length - 1 ? "text-foreground font-medium" : ""}`}
-            >
-              {crumb.name}
-            </button>
-          </Fragment>
-        ))}
+        {trail.map((entry, i) =>
+          entry === "ellipsis" ? (
+            <Fragment key="ellipsis">
+              <ChevronRightIcon className="size-3 shrink-0" />
+              <button
+                type="button"
+                aria-label="Show full path"
+                title="Show full path"
+                onClick={() => setTrailExpanded(true)}
+                className="shrink-0 rounded px-1 py-0.5 hover:text-foreground transition-colors"
+              >
+                …
+              </button>
+            </Fragment>
+          ) : (
+            <Fragment key={entry.crumb.id}>
+              {i > 0 && <ChevronRightIcon className="size-3 shrink-0" />}
+              <button
+                type="button"
+                title={entry.crumb.name}
+                onClick={() => navigateTo(entry.index)}
+                className={`max-w-40 shrink-0 truncate rounded px-1 py-0.5 hover:text-foreground transition-colors ${entry.index === breadcrumbs.length - 1 ? "text-foreground font-medium" : ""}`}
+              >
+                {entry.crumb.name}
+              </button>
+            </Fragment>
+          ),
+        )}
       </div>
 
       <div className="flex gap-2 justify-end">
