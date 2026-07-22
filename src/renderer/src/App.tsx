@@ -215,7 +215,7 @@ function App(): React.JSX.Element {
             </div>
             {recents.length > 0 && (
               <>
-                <div className="mt-4 px-3 pb-1 text-xs font-medium text-sidebar-foreground/60">
+                <div className="mt-4 px-3 pb-1 text-xs font-medium text-sidebar-foreground">
                   Recents
                 </div>
                 <div className="min-h-0 overflow-y-auto space-y-0.5">
@@ -243,7 +243,7 @@ function App(): React.JSX.Element {
               </>
             )}
           </div>
-          <div className="flex items-center justify-center gap-1 pb-2">
+          <div className="mt-6 flex items-center justify-center gap-1 pb-2">
             <svg
               viewBox="0 0 5000 5000"
               fill="currentColor"
