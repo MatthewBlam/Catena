@@ -16,6 +16,17 @@ describe("toErrorMessage", () => {
     expect(toErrorMessage(err, "fallback")).toBe("Source not found: abc");
   });
 
+  it("recovers the exact 'OAuth canceled' sentinel from an IPC-wrapped rejection", () => {
+    // ConnectNotionButton/ConnectDriveButton compare the result to the literal
+    // "OAuth canceled" to return to idle silently. The IPC wrapper must strip
+    // cleanly or that `=== "OAuth canceled"` check breaks and a user-initiated
+    // cancel surfaces as an error banner instead.
+    const err = new Error(
+      "Error invoking remote method 'auth:notion-oauth-start': Error: OAuth canceled",
+    );
+    expect(toErrorMessage(err, "fallback")).toBe("OAuth canceled");
+  });
+
   it("leaves an Error message alone when it never carried the IPC prefix", () => {
     const err = new Error("Notion token not found. Connect Notion first.");
     expect(toErrorMessage(err, "fallback")).toBe(

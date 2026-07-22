@@ -64,9 +64,7 @@ interface CommonsAPI {
     id: string,
   ): Promise<import("../shared/types").RecentSearchDetail | null>;
   deleteRecentSearch(id: string): Promise<void>;
-  /**
-   * Fires when the recents list has gone stale. Refetch; do not infer.
-   */
+  /** Fires when `recents:list` has gone stale. Refetch; do not infer. */
   onRecentsChanged(callback: () => void): () => void;
 }
 

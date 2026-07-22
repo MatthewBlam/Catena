@@ -433,19 +433,6 @@ export function getChunksByIds(
   return result;
 }
 
-export function getChunksWithEmbeddingsByModel(
-  db: Database.Database,
-  model: string,
-  limit = 10_000,
-): ChunkRow[] {
-  const rows = db
-    .prepare(
-      "SELECT * FROM chunks WHERE embedding IS NOT NULL AND embedding_model = ? LIMIT ?",
-    )
-    .all(model, limit) as ChunkDbRow[];
-  return rows.map(mapChunkRow);
-}
-
 /** The columns a cosine scan actually touches — nothing scoring doesn't need. */
 export interface ChunkEmbeddingRow {
   id: string;
@@ -459,10 +446,9 @@ interface ChunkEmbeddingDbRow {
 
 /**
  * Streams chunks one row at a time instead of materializing every embedding
- * Buffer at once. At 1536 dimensions an embedding is ~6 KB, so the array-returning
- * version above costs ~61 MB per search at its 10k cap — and the cap is the only
- * thing keeping that number from growing with the corpus. Callers that only need
- * a top-K should iterate and keep O(K).
+ * Buffer at once. At 1536 dimensions an embedding is ~6 KB, so eagerly loading
+ * all of them at once would cost ~6 KB × corpus (tens of MB and climbing with
+ * the corpus). Callers that only need a top-K should iterate and keep O(K).
  *
  * Selects only `id` and `embedding` — the scan only scores, it never reads
  * `text`/`heading`/`document_id`. Those are wasted work for the ~250k-40 rows
@@ -786,8 +772,9 @@ export function getRecentSearchById(
   };
 }
 
-export function deleteRecentSearch(db: Database.Database, id: string): void {
-  db.prepare("DELETE FROM recent_searches WHERE id = ?").run(id);
+/** Returns the number of rows removed (0 if the id was already gone). */
+export function deleteRecentSearch(db: Database.Database, id: string): number {
+  return db.prepare("DELETE FROM recent_searches WHERE id = ?").run(id).changes;
 }
 
 /**

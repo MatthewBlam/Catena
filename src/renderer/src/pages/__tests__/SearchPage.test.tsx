@@ -479,6 +479,34 @@ describe("SearchPage — restore mechanics", () => {
     );
   });
 
+  it("does not re-hydrate when a rerender carries the same restore token", async () => {
+    // The restore effect keys on token *change*. A rerender with the same token
+    // (an unrelated parent re-render) must not re-fire and clobber an edit the
+    // user has since made to the input.
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
+      <SearchPage
+        visible={true}
+        restore={{ detail: RESTORE_DETAIL, token: 1 }}
+      />,
+    );
+    await screen.findByText(/^Saved results from/);
+
+    const input = screen.getByLabelText("Search your documents");
+    fireEvent.change(input, { target: { value: "user typing" } });
+
+    // Same token, fresh object identity — the effect runs but must bail.
+    rerender(
+      <SearchPage
+        visible={true}
+        restore={{ detail: RESTORE_DETAIL, token: 1 }}
+      />,
+    );
+
+    expect(input).toHaveValue("user typing");
+  });
+
   it("disables Search again when the provider is not ready, while the snapshot keeps rendering", async () => {
     mockApi({ hasCohereKey: false, sourceCount: 1 });
     const { rerender } = render(<SearchPage visible={true} restore={null} />);

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { runMigrations } from "../migrations";
 import { createTestDb, createUnmigratedTestDb } from "./test-db";
@@ -1077,7 +1077,12 @@ describe("recent searches", () => {
     ).toBe(false);
     expect(listRecentSearches(db)).toHaveLength(1);
 
+    // The DB-failure path logs via console.error; spy so the expected error
+    // stays out of otherwise-pristine test output, and assert it fired.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     db.exec("DROP TABLE recent_searches");
     expect(saveRecentSearchFromResponse(db, "boom", okResponse)).toBe(false);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

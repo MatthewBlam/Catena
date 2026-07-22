@@ -182,6 +182,26 @@ describe("App recents sidebar", () => {
     expect(settingsButton).not.toHaveAttribute("aria-current");
   });
 
+  it("re-fetches when the same recent is clicked twice (restore re-fires per click)", async () => {
+    mockApi({ onboarded: true, recents: [RECENT_1] });
+    vi.mocked(window.api.getRecentSearch).mockResolvedValue(RECENT_1_DETAIL);
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: RECENT_1.query }),
+    );
+    await waitFor(() => {
+      expect(window.api.getRecentSearch).toHaveBeenCalledTimes(1);
+    });
+
+    // A second click of the same entry must not be a no-op — each click bumps
+    // the restore token so SearchPage re-hydrates even for identical detail.
+    fireEvent.click(screen.getByRole("button", { name: RECENT_1.query }));
+    await waitFor(() => {
+      expect(window.api.getRecentSearch).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("does not navigate when the recent has expired, and refetches the list instead", async () => {
     mockApi({ onboarded: true, recents: [RECENT_1] });
     vi.mocked(window.api.getRecentSearch).mockResolvedValue(null);

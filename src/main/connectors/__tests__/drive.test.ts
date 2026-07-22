@@ -106,7 +106,7 @@ describe("extractFolderIdFromUrl", () => {
 
 describe("DriveConnector", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("yields a document from a Google Doc", async () => {
@@ -612,7 +612,7 @@ describe("DriveConnector", () => {
 
 describe("DriveConnector walk result", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 

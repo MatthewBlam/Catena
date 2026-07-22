@@ -272,8 +272,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("recents:delete", (_, id: string) => {
     if (!id) throw new Error("id is required");
-    deleteRecentSearch(getDb(), id);
-    broadcastRecentsChanged();
+    // Only broadcast when a row actually went away, so a delete of an
+    // already-gone id doesn't make every window refetch for nothing.
+    if (deleteRecentSearch(getDb(), id) > 0) broadcastRecentsChanged();
   });
 
   ipcMain.handle("sources:list", () => {

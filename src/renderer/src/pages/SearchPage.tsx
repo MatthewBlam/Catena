@@ -182,6 +182,16 @@ export function SearchPage({
     setRestoredAt(d.updatedAt);
   }, [restore]);
 
+  // Re-render once a minute while a snapshot is shown so its "Saved results
+  // from N ago" label keeps up with the clock instead of freezing at the
+  // moment it was restored. The timer only runs while the banner is visible.
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    if (!restoredAt) return;
+    const id = setInterval(() => setClockTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, [restoredAt]);
+
   const handleSearch = useCallback(async (searchQuery?: string) => {
     const q = (searchQuery ?? queryRef.current).trim();
     // F7: belt-and-suspenders alongside the disabled input — the empty-state's
@@ -236,6 +246,10 @@ export function SearchPage({
   const hasMismatch =
     healthSignature !== null && healthSignature !== dismissedSignature;
 
+  // Provider not ready, or no sources to search: the input and the restore
+  // banner's "Search again" are both inert.
+  const searchUnavailable = providerReady === false || sourceCount === 0;
+
   return (
     <div className="min-h-full flex flex-col pt-3 pb-8">
       <div className="w-full max-w-3xl mx-auto px-10 mb-3">
@@ -249,7 +263,7 @@ export function SearchPage({
           onChange={setQuery}
           onSubmit={() => handleSearch()}
           loading={loading}
-          disabled={providerReady === false || sourceCount === 0}
+          disabled={searchUnavailable}
         />
       </div>
 
@@ -264,7 +278,7 @@ export function SearchPage({
               <Button
                 variant="outline"
                 size="sm"
-                disabled={providerReady === false || sourceCount === 0}
+                disabled={searchUnavailable}
                 onClick={() => handleSearch(lastQuery)}
               >
                 Search again

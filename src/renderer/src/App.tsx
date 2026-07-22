@@ -161,8 +161,8 @@ function App(): React.JSX.Element {
   );
 
   const handleDeleteRecent = useCallback((id: string) => {
-    // No confirm() — low-stakes, unlike source removal. The recents:changed
-    // broadcast this triggers refreshes the list.
+    // No confirm() — low-stakes, unlike source removal. The delete fires a
+    // recents:changed broadcast, which refreshes the list.
     window.api.deleteRecentSearch(id).catch(() => {});
   }, []);
 

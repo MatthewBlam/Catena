@@ -255,7 +255,7 @@ vi.mock("@notionhq/client", () => {
 
 describe("NotionConnector", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("yields a document from a single page", async () => {
@@ -543,7 +543,7 @@ describe("NotionConnector", () => {
 
 describe("NotionConnector walk result", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("reports the ids it saw, in the same form it yields them", async () => {
@@ -654,7 +654,7 @@ describe("NotionConnector walk result", () => {
 
 describe("listNotionItems", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("returns all pages and databases sorted alphabetically", async () => {
