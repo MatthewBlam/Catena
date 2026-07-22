@@ -10,8 +10,12 @@ interface OllamaOptionProps {
   onSuccess: () => void;
 }
 
-export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Element {
-  const [status, setStatus] = useState<"checking" | "available" | "unavailable">("checking");
+export function OllamaOption({
+  onSuccess,
+}: OllamaOptionProps): React.JSX.Element {
+  const [status, setStatus] = useState<
+    "checking" | "available" | "unavailable"
+  >("checking");
   const [models, setModels] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -84,7 +88,9 @@ export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Elemen
   }
 
   if (status === "checking") {
-    return <p className="text-sm text-muted-foreground">Checking for Ollama…</p>;
+    return (
+      <p className="text-sm text-muted-foreground">Checking for Ollama…</p>
+    );
   }
 
   if (status === "unavailable") {
@@ -92,7 +98,11 @@ export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Elemen
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">
           Ollama is not running. Install it from{" "}
-          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => void window.api.openExternal("https://ollama.com")}>
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-foreground"
+            onClick={() => void window.api.openExternal("https://ollama.com")}
+          >
             ollama.com
           </button>
           , then start it and try again.
@@ -111,17 +121,26 @@ export function OllamaOption({ onSuccess }: OllamaOptionProps): React.JSX.Elemen
       <p className="text-sm text-success-foreground">Ollama is running.</p>
       {embeddingModels.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">Found embedding models: {embeddingModels.join(", ")}</p>
+          <p className="text-sm text-muted-foreground">
+            Found embedding models: {embeddingModels.join(", ")}
+          </p>
           <Button onClick={handleSelect} className="w-full">
             Use Ollama
           </Button>
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">No embedding models found. Pull one first:</p>
+          <p className="text-sm text-muted-foreground">
+            No embedding models found. Pull one first:
+          </p>
           <div className="flex items-center justify-between gap-2 rounded-sm bg-muted py-1 pl-2 pr-1">
             <code className="text-sm font-mono">{PULL_COMMAND}</code>
-            <Button variant="ghost" size="icon-sm" aria-label={copied ? "Copied" : "Copy command"} onClick={() => void handleCopy()}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={copied ? "Copied" : "Copy command"}
+              onClick={() => void handleCopy()}
+            >
               {copied ? <CheckIcon /> : <CopyIcon />}
             </Button>
           </div>
