@@ -144,6 +144,11 @@ describe("search", () => {
     expect(results[0].url).toBe("https://notion.so/meeting");
     expect(results[0].provider).toBe("notion");
     expect(results[0].score).toBeGreaterThan(results[1].score);
+    // No-rerank (RRF) scores are rescaled relative to the top hit, so the best
+    // match reads as 1.0 (100%) rather than the raw RRF magnitude (~0.03) that
+    // made every Ollama result render as "≤3% match".
+    expect(results[0].score).toBeCloseTo(1, 5);
+    expect(results[1].score).toBeLessThan(1);
   });
 
   it("reranks when embedConfig.apiKey is provided", async () => {

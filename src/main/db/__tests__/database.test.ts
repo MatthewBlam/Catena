@@ -1033,6 +1033,13 @@ describe("recent searches", () => {
       row.id,
     );
     expect(getRecentSearchById(db, row.id)).toBeNull();
+    // Self-heal: the unparseable row is dropped on read, not left as a
+    // permanently dead sidebar entry.
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS n FROM recent_searches WHERE id = ?")
+        .get(row.id),
+    ).toEqual({ n: 0 });
   });
 
   it("deleteRecentSearch removes exactly the targeted row", () => {

@@ -236,6 +236,7 @@ export async function search(
 
   let topResults: { chunk: ChunkRow; score: number }[];
   let rerankFailed = false;
+  let usedRerank = false;
 
   if (embedConfig.apiKey) {
     try {
@@ -260,6 +261,7 @@ export async function search(
           return entry ? { chunk: entry.chunk, score: r.score } : null;
         })
         .filter((e): e is NonNullable<typeof e> => e !== null);
+      usedRerank = true;
     } catch (err) {
       // A cancelled search is not a degraded search. Swallowing the abort here
       // would return results for a query the user has already replaced, flagged
@@ -273,6 +275,21 @@ export async function search(
     }
   } else {
     topResults = merged.slice(0, RESULT_LIMIT);
+  }
+
+  // RRF fusion scores are tiny raw magnitudes (a top hit lands near 1/RRF_K ≈
+  // 0.016–0.033) and are not comparable to Cohere rerank's 0–1 relevance. Left
+  // raw, every result on the no-rerank path — i.e. every Ollama user — renders
+  // as "≤3% match". Rescale relative to the top hit so the best match reads as
+  // 100% and the rest as a fraction of it, keeping the "% match" badge in a
+  // sane range. topResults is sorted by descending score, so [0] is the max;
+  // the map is monotonic, so ordering is preserved. Rerank scores are already
+  // 0–1 and pass through untouched.
+  if (!usedRerank && topResults.length > 0) {
+    const maxScore = topResults[0].score;
+    if (maxScore > 0) {
+      topResults = topResults.map((r) => ({ ...r, score: r.score / maxScore }));
+    }
   }
 
   const docIds = [...new Set(topResults.map((r) => r.chunk.documentId))];

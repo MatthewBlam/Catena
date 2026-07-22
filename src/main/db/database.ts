@@ -767,6 +767,11 @@ export function getRecentSearchById(
   try {
     snapshot = JSON.parse(row.response_json) as RecentSearchSnapshot;
   } catch {
+    // Self-heal: a row whose snapshot no longer parses can never be restored,
+    // so drop it rather than leave a permanently dead sidebar entry the user
+    // can only clear by waiting out the 7-day retention. Mirrors how a corrupt
+    // secret auto-deletes on read.
+    deleteRecentSearch(db, id);
     return null;
   }
 
@@ -866,6 +871,11 @@ export function clearAllData(db: Database.Database): void {
     db.exec("DELETE FROM recent_searches");
   });
   clear();
+  // Reclaim the freed pages so "Database size" actually drops after a wipe.
+  // DELETE only moves pages to the freelist; the file never shrinks without
+  // VACUUM, which must run outside the transaction above (it cannot run inside
+  // one).
+  db.exec("VACUUM");
 }
 
 // --- Embedding Health ---
