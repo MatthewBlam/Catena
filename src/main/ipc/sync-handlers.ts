@@ -13,7 +13,7 @@ import { NotionConnector } from "../connectors/notion";
 import { DriveConnector } from "../connectors/drive";
 import { getAuthenticatedClient, refreshIfNeeded } from "../auth/google-oauth";
 import type { EmbedConfig } from "../search/embedder";
-import type { SyncProgress } from "../../shared/types";
+import type { SyncProgress, AnswerDelta } from "../../shared/types";
 import { track } from "../telemetry/posthog";
 
 export interface ActiveSync {
@@ -167,6 +167,15 @@ export function broadcastSourcesChanged(): void {
 /** Tells every window that the recent-searches list is stale. */
 export function broadcastRecentsChanged(): void {
   broadcast("recents:changed");
+}
+
+/**
+ * Streams one chunk of a generating answer to the renderer. Broadcast to every
+ * window (like sync progress), tagged with the request id so a renderer can drop
+ * deltas from a generation a newer search or restore has already superseded.
+ */
+export function broadcastAnswerDelta(delta: AnswerDelta): void {
+  broadcast("answer:delta", delta);
 }
 
 /** Progress for every sync running right now, for a renderer that just mounted. */

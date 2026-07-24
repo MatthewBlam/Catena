@@ -14,6 +14,8 @@ import type {
   EmbeddingHealth,
   RecentSearchDetail,
   SearchResponse,
+  AnswerResponse,
+  AnswerDelta,
 } from "../../../../shared/types";
 
 afterEach(cleanup);
@@ -23,6 +25,7 @@ interface MockApiState {
   hasCohereKey: boolean;
   ollamaAvailable: boolean;
   searchResponse: SearchResponse;
+  answerResponse: AnswerResponse;
   /**
    * Drives `listSources().length`, i.e. `sourceCount`. Defaults to 0, which
    * renders the "no sources connected" text instead of `EmptyState` — tests
@@ -48,16 +51,19 @@ const DEFAULT_HEALTH: EmbeddingHealth = {
 function mockApi(overrides: Partial<MockApiState> = {}): {
   state: MockApiState;
   fireSourcesChanged: () => void;
+  fireAnswerDelta: (delta: AnswerDelta) => void;
 } {
   const state: MockApiState = {
     provider: "cohere",
     hasCohereKey: true,
     ollamaAvailable: false,
     searchResponse: { results: [], rerankFailed: false },
+    answerResponse: { text: "Generated answer.", citations: [] },
     sourceCount: 0,
     ...overrides,
   };
   let listeners: Array<() => void> = [];
+  let answerListeners: Array<(delta: AnswerDelta) => void> = [];
 
   window.api = {
     checkEmbeddingHealth: vi.fn(() => Promise.resolve(DEFAULT_HEALTH)),
@@ -84,6 +90,14 @@ function mockApi(overrides: Partial<MockApiState> = {}): {
       }),
     ),
     search: vi.fn(() => Promise.resolve(state.searchResponse)),
+    generateAnswer: vi.fn(() => Promise.resolve(state.answerResponse)),
+    cancelAnswer: vi.fn(() => Promise.resolve()),
+    onAnswerDelta: vi.fn((cb: (delta: AnswerDelta) => void) => {
+      answerListeners.push(cb);
+      return () => {
+        answerListeners = answerListeners.filter((l) => l !== cb);
+      };
+    }),
   } as unknown as typeof window.api;
 
   return {
@@ -91,6 +105,11 @@ function mockApi(overrides: Partial<MockApiState> = {}): {
     fireSourcesChanged: () => {
       act(() => {
         for (const listener of listeners) listener();
+      });
+    },
+    fireAnswerDelta: (delta) => {
+      act(() => {
+        for (const listener of answerListeners) listener(delta);
       });
     },
   };
@@ -647,5 +666,147 @@ describe("SearchPage — restore mechanics", () => {
       expect(screen.queryByText(/^Saved results from/)).not.toBeInTheDocument();
     });
     expect(window.api.search).toHaveBeenCalledWith("new query");
+  });
+});
+
+const ONE_RESULT: SearchResponse = {
+  results: [
+    {
+      chunkId: "c1",
+      documentTitle: "Reimbursement Policy",
+      snippet: "Submit receipts within 30 days...",
+      heading: null,
+      url: null,
+      provider: "notion",
+      score: 0.9,
+    },
+  ],
+  rerankFailed: false,
+};
+
+/** Runs a live search and waits for its results to land on screen. */
+async function searchToResults(query = "reimbursement"): Promise<void> {
+  const input = await screen.findByLabelText("Search your documents");
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await screen.findByText(/Results for/);
+}
+
+function generateArgs(): { query: string; requestId: number; docs: unknown } {
+  return (window.api.generateAnswer as ReturnType<typeof vi.fn>).mock
+    .calls[0][0];
+}
+
+describe("SearchPage — generated answers", () => {
+  it("shows a Generate answer button with results and streams a generation to a final answer", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1, searchResponse: ONE_RESULT });
+    render(<SearchPage visible={true} />);
+    await searchToResults();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+
+    await waitFor(() =>
+      expect(window.api.generateAnswer).toHaveBeenCalledTimes(1),
+    );
+    // Sends the query the results belong to plus title-only docs (main re-fetches
+    // the authoritative text by id), never the raw input box value.
+    expect(generateArgs().query).toBe("reimbursement");
+    expect(generateArgs().docs).toEqual([
+      { chunkId: "c1", documentTitle: "Reimbursement Policy" },
+    ]);
+
+    expect(await screen.findByText("Generated answer.")).toBeInTheDocument();
+  });
+
+  it("appends deltas for the current request and ignores a superseded one", async () => {
+    const { promise, resolve } = deferred<AnswerResponse>();
+    const { fireAnswerDelta } = mockApi({
+      hasCohereKey: true,
+      sourceCount: 1,
+      searchResponse: ONE_RESULT,
+    });
+    window.api.generateAnswer = vi.fn(() => promise);
+    render(<SearchPage visible={true} />);
+    await searchToResults();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+    await waitFor(() => expect(window.api.generateAnswer).toHaveBeenCalled());
+    const rid = generateArgs().requestId;
+
+    fireAnswerDelta({ requestId: rid, delta: "Hello " });
+    fireAnswerDelta({ requestId: rid + 999, delta: "STALE" }); // superseded
+    fireAnswerDelta({ requestId: rid, delta: "world" });
+
+    expect(document.body.textContent).toContain("Hello world");
+    expect(document.body.textContent).not.toContain("STALE");
+
+    resolve({ text: "Hello world.", citations: [] });
+    expect(await screen.findByText("Hello world.")).toBeInTheDocument();
+  });
+
+  it("clears the answer when a new search runs, aborting the prior generation", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1, searchResponse: ONE_RESULT });
+    render(<SearchPage visible={true} />);
+    await searchToResults();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+    await screen.findByText("Generated answer.");
+
+    vi.mocked(window.api.cancelAnswer).mockClear();
+    const input = screen.getByLabelText("Search your documents");
+    fireEvent.change(input, { target: { value: "budget" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(screen.queryByText("Generated answer.")).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    ).toBeInTheDocument();
+    expect(window.api.cancelAnswer).toHaveBeenCalled();
+  });
+
+  it("shows a saved answer when restoring a recent that has one, without the Generate button", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
+      <SearchPage
+        visible={true}
+        restore={{
+          detail: {
+            ...RESTORE_DETAIL,
+            answer: { text: "Saved answer text.", citations: [] },
+          },
+          token: 1,
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Saved answer text.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Generate answer" }),
+    ).not.toBeInTheDocument();
+    expect(window.api.generateAnswer).not.toHaveBeenCalled();
+  });
+
+  it("offers the Generate button for a restored recent that has no saved answer", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
+      <SearchPage
+        visible={true}
+        restore={{ detail: RESTORE_DETAIL, token: 1 }}
+      />,
+    );
+
+    expect(await screen.findByText("Reimbursement Policy")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Generate answer" }),
+    ).toBeInTheDocument();
   });
 });

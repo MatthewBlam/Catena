@@ -35,6 +35,7 @@ import {
   deleteRecentSearch,
   pruneExpiredRecentSearches,
   saveRecentSearchFromResponse,
+  updateRecentSearchAnswer,
   type ChunkRow,
   type RecentSearchSnapshot,
 } from "../database";
@@ -1084,5 +1085,62 @@ describe("recent searches", () => {
     expect(saveRecentSearchFromResponse(db, "boom", okResponse)).toBe(false);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("updateRecentSearchAnswer merges an answer into the snapshot without reordering the row", () => {
+    upsertRecentSearch(
+      db,
+      "  How TALL are penguins? ",
+      makeSnapshot(2),
+      "2024-01-01T00:00:00.000Z",
+    );
+    const row = listRecentSearches(db)[0];
+
+    // Different case/spacing than the stored query — must still hit the same row.
+    updateRecentSearchAnswer(db, "how tall are penguins?", {
+      text: "Emperor penguins are the tallest.",
+      citations: [{ start: 0, end: 16, chunkId: "c1" }],
+    });
+
+    const detail = getRecentSearchById(db, row.id);
+    expect(detail?.answer?.text).toBe("Emperor penguins are the tallest.");
+    expect(detail?.answer?.citations).toEqual([
+      { start: 0, end: 16, chunkId: "c1" },
+    ]);
+    // The results and identity are untouched, and updated_at did not move
+    // (generating an answer is not a new search).
+    expect(detail?.results).toHaveLength(2);
+    expect(detail?.updatedAt).toBe("2024-01-01T00:00:00.000Z");
+  });
+
+  it("updateRecentSearchAnswer is a no-op when no row matches the query", () => {
+    // No throw, nothing created — the row was evicted between search and answer.
+    expect(() =>
+      updateRecentSearchAnswer(db, "never searched", {
+        text: "orphan answer",
+        citations: [],
+      }),
+    ).not.toThrow();
+    expect(listRecentSearches(db)).toHaveLength(0);
+  });
+
+  it("getRecentSearchById returns undefined answer for a pre-feature snapshot (backward compatible)", () => {
+    // A row whose response_json predates the answer field parses fine and simply
+    // has no answer, so old recents show the Generate button rather than crash.
+    upsertRecentSearch(
+      db,
+      "legacy",
+      makeSnapshot(1),
+      "2024-01-01T00:00:00.000Z",
+    );
+    const row = listRecentSearches(db)[0];
+    db.prepare("UPDATE recent_searches SET response_json = ? WHERE id = ?").run(
+      JSON.stringify({ results: makeSnapshot(1).results }),
+      row.id,
+    );
+
+    const detail = getRecentSearchById(db, row.id);
+    expect(detail).not.toBeNull();
+    expect(detail?.answer).toBeUndefined();
   });
 });

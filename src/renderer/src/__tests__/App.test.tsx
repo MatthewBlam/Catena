@@ -76,6 +76,9 @@ function mockApi(overrides: {
     ),
     search: vi.fn(),
     cancelSearch: vi.fn(() => Promise.resolve()),
+    generateAnswer: vi.fn(() => Promise.resolve({ text: "", citations: [] })),
+    cancelAnswer: vi.fn(() => Promise.resolve()),
+    onAnswerDelta: vi.fn(() => () => {}),
     onSourcesChanged: vi.fn(() => () => {}),
     listRecentSearches: vi.fn(() => Promise.resolve(overrides.recents ?? [])),
     getRecentSearch: vi.fn(() => Promise.resolve(null)),
@@ -117,6 +120,9 @@ describe("App readiness gate", () => {
       await screen.findByRole("button", { name: "Settings" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Welcome to Commons")).not.toBeInTheDocument();
+    // The Search page mounts cleanly — a page that threw during mount (e.g. a
+    // missing window.api method) would land in the ErrorBoundary instead.
+    expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
   });
 
   it("still gates a fresh install behind the wizard", async () => {

@@ -21,8 +21,11 @@ import {
   deleteRecentSearch,
   pruneExpiredRecentSearches,
   saveRecentSearchFromResponse,
+  getChunksByIds,
+  updateRecentSearchAnswer,
 } from "../db/database";
 import { search } from "../search/searcher";
+import { generateAnswer, type AnswerDoc } from "../search/answerer";
 import { startNotionOAuth, cancelNotionOAuth } from "../auth/notion-oauth";
 import { listNotionItems } from "../connectors/notion";
 import {
@@ -34,13 +37,14 @@ import {
 import { listDriveItems } from "../connectors/drive";
 import { getEmbeddingModelName } from "../search/embedder";
 import type { EmbedConfig } from "../search/embedder";
-import type { SourceConfig } from "../../shared/types";
+import type { SourceConfig, AnswerRequest } from "../../shared/types";
 import {
   cancelSync,
   cancelAllSyncs,
   buildEmbedConfig,
   broadcastSourcesChanged,
   broadcastRecentsChanged,
+  broadcastAnswerDelta,
   getActiveSyncProgress,
 } from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
@@ -72,6 +76,14 @@ function isSafeUrl(url: string): boolean {
  * windows search independently, and one must never cancel the other.
  */
 const activeSearches = new Map<number, AbortController>();
+
+/**
+ * The in-flight answer generation per renderer, mirroring `activeSearches`. A new
+ * generation (or a search/restore that supersedes one) aborts the prior. Kept
+ * separate from `activeSearches` so cancelling an answer never touches a search
+ * and vice versa.
+ */
+const activeAnswers = new Map<number, AbortController>();
 
 export function registerIpcHandlers(): void {
   ipcMain.handle("secrets:save", (_, key: string, value: string) => {
@@ -256,6 +268,81 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("search:cancel", (event) => {
     activeSearches.get(event.sender.id)?.abort();
+  });
+
+  ipcMain.handle("answer:generate", async (event, request: AnswerRequest) => {
+    const senderId = event.sender.id;
+
+    // A new generation supersedes the old one, per renderer (see activeSearches).
+    activeAnswers.get(senderId)?.abort();
+    const controller = new AbortController();
+    activeAnswers.set(senderId, controller);
+
+    const db = getDb();
+    const embedConfig = buildEmbedConfig(db);
+    const startMs = Date.now();
+
+    try {
+      // Re-fetch authoritative chunk text by id; titles ride along on the
+      // request so we avoid a chunk→document join and a second copy of the full
+      // text across the bridge. Preserve the renderer's (score/display) order,
+      // dropping any chunk that was removed since the search.
+      const chunkIds = request.docs.map((d) => d.chunkId);
+      const titleById = new Map(
+        request.docs.map((d) => [d.chunkId, d.documentTitle]),
+      );
+      const textById = new Map(
+        getChunksByIds(db, chunkIds).map((c) => [c.id, c.text]),
+      );
+      const docs: AnswerDoc[] = chunkIds
+        .filter((id) => textById.has(id))
+        .map((id) => ({
+          chunkId: id,
+          title: titleById.get(id) ?? "",
+          text: textById.get(id) ?? "",
+        }));
+
+      const response = await generateAnswer(request.query, docs, embedConfig, {
+        signal: controller.signal,
+        onDelta: (delta) =>
+          broadcastAnswerDelta({ requestId: request.requestId, delta }),
+        ollamaChatModel:
+          (getSetting(db, "ollama_chat_model") as string) || undefined,
+      });
+
+      // Persist only a real, completed answer: never a cancelled one (the user
+      // stopped it) or a failed/degraded one (nothing worth restoring).
+      if (!response.cancelled && !response.errorKind) {
+        updateRecentSearchAnswer(db, request.query, {
+          text: response.text,
+          citations: response.citations,
+        });
+      }
+
+      // No event for a cancelled generation — like a superseded search, it never
+      // really ran. Never the query or answer text, only shape.
+      if (!response.cancelled) {
+        track("commons_answer_generated", {
+          embedding_provider: embedConfig.provider,
+          duration_ms: Date.now() - startMs,
+          answer_chars: response.text.length,
+          citation_count: response.citations.length,
+          error_kind: response.errorKind ?? null,
+        });
+      }
+
+      return response;
+    } finally {
+      // Only if we still own the entry — a superseding generation has already
+      // installed its own controller, which must stay cancellable.
+      if (activeAnswers.get(senderId) === controller) {
+        activeAnswers.delete(senderId);
+      }
+    }
+  });
+
+  ipcMain.handle("answer:cancel", (event) => {
+    activeAnswers.get(event.sender.id)?.abort();
   });
 
   ipcMain.handle("recents:list", () => {

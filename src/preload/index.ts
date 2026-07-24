@@ -21,6 +21,25 @@ const api = {
   search: (query: string): Promise<import("../shared/types").SearchResponse> =>
     ipcRenderer.invoke("search:query", query),
   cancelSearch: (): Promise<void> => ipcRenderer.invoke("search:cancel"),
+  generateAnswer: (
+    request: import("../shared/types").AnswerRequest,
+  ): Promise<import("../shared/types").AnswerResponse> =>
+    ipcRenderer.invoke("answer:generate", request),
+  cancelAnswer: (): Promise<void> => ipcRenderer.invoke("answer:cancel"),
+  onAnswerDelta: (
+    callback: (delta: import("../shared/types").AnswerDelta) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      delta: import("../shared/types").AnswerDelta,
+    ): void => {
+      callback(delta);
+    };
+    ipcRenderer.on("answer:delta", handler);
+    return () => {
+      ipcRenderer.removeListener("answer:delta", handler);
+    };
+  },
   startNotionOAuth: (): Promise<{ workspaceName: string }> =>
     ipcRenderer.invoke("auth:notion-oauth-start"),
   cancelNotionOAuth: (): Promise<void> =>

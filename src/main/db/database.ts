@@ -5,6 +5,7 @@ import type {
   SearchResponse,
   RecentSearch,
   RecentSearchDetail,
+  StoredAnswer,
 } from "../../shared/types";
 
 // --- Sources ---
@@ -637,6 +638,12 @@ const RECENT_SEARCH_CAP = 50;
 export interface RecentSearchSnapshot {
   results: SearchResult[];
   rewrittenQuery?: string;
+  /**
+   * A generated answer, written in later by updateRecentSearchAnswer after the
+   * user asks for one — the initial search never has it. Optional so pre-feature
+   * rows (and searches whose answer was never generated) parse unchanged.
+   */
+  answer?: StoredAnswer;
 }
 
 interface RecentSearchDbRow {
@@ -769,6 +776,7 @@ export function getRecentSearchById(
     updatedAt: row.updated_at,
     results: snapshot.results,
     rewrittenQuery: snapshot.rewrittenQuery,
+    answer: snapshot.answer,
   };
 }
 
@@ -816,6 +824,51 @@ export function saveRecentSearchFromResponse(
   } catch (err) {
     console.error("Failed to save recent search:", err);
     return false;
+  }
+}
+
+/**
+ * Writes a generated answer into the stored snapshot of the recent row matching
+ * `query` (by normalized form). The second write path Recents needs: a search
+ * saves the row up front, but the answer is generated on demand afterwards, so
+ * it can only be merged in once the stream completes.
+ *
+ * A no-op — not an error — when the row is gone: the 7-day prune or the 50-row
+ * cap can evict it between the search and the answer, and the answer still shows
+ * live this session regardless. Deliberately leaves `updated_at` untouched so
+ * generating an answer does not reorder the sidebar (it is not a new search).
+ * Errors are logged and swallowed, like saveRecentSearchFromResponse — a failed
+ * persist must never surface to the user mid-answer.
+ */
+export function updateRecentSearchAnswer(
+  db: Database.Database,
+  query: string,
+  answer: StoredAnswer,
+): void {
+  try {
+    const normalizedQuery = normalizeQuery(query);
+    const row = db
+      .prepare(
+        "SELECT response_json FROM recent_searches WHERE normalized_query = ?",
+      )
+      .get(normalizedQuery) as { response_json: string } | undefined;
+    if (!row) return;
+
+    let snapshot: RecentSearchSnapshot;
+    try {
+      snapshot = JSON.parse(row.response_json) as RecentSearchSnapshot;
+    } catch {
+      // A snapshot that no longer parses is unrestorable anyway; leave it for
+      // getRecentSearchById's self-heal rather than resurrect it here.
+      return;
+    }
+
+    snapshot.answer = answer;
+    db.prepare(
+      "UPDATE recent_searches SET response_json = ? WHERE normalized_query = ?",
+    ).run(JSON.stringify(snapshot), normalizedQuery);
+  } catch (err) {
+    console.error("Failed to save answer to recent search:", err);
   }
 }
 

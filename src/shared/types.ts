@@ -75,6 +75,59 @@ export interface SearchResponse {
   cancelled?: boolean;
 }
 
+/**
+ * A span of the generated answer text that a source supports. `chunkId` points
+ * at the `SearchResult` (in the same search) the model cited, which the renderer
+ * turns into a numbered marker linking back to that result card. Only Cohere
+ * produces these; Ollama answers carry an empty citation list (the result list
+ * below the answer is its citation surface).
+ */
+export interface AnswerCitation {
+  /** Character offset into the answer text where the cited span starts (inclusive). */
+  start: number;
+  /** Character offset where the cited span ends (exclusive). */
+  end: number;
+  chunkId: string;
+}
+
+/** A generated answer as persisted with a recent search and rendered in the UI. */
+export interface StoredAnswer {
+  text: string;
+  citations: AnswerCitation[];
+}
+
+/**
+ * The result of an answer-generation request. Like `SearchResponse`, an abort
+ * resolves rather than rejects (`cancelled: true`) because an Error's `name`
+ * does not survive IPC, so the renderer could not otherwise tell a user-initiated
+ * stop from a real failure. `error`/`errorKind` are set only on a genuine
+ * failure; `no_model` means Ollama has no chat model installed and drives a
+ * degraded "install a chat model" hint rather than an error banner.
+ */
+export interface AnswerResponse {
+  text: string;
+  citations: AnswerCitation[];
+  cancelled?: boolean;
+  error?: string;
+  errorKind?: "no_model" | "failed";
+}
+
+/** What the renderer hands the main process to ground an answer on. */
+export interface AnswerRequest {
+  /** The original user query (not the rewritten one) — the question the answer addresses. */
+  query: string;
+  /** Monotonic per-renderer token so streamed deltas from a superseded request can be dropped. */
+  requestId: number;
+  /** The current results, in display order. Titles come from here; text is re-fetched by id in main. */
+  docs: { chunkId: string; documentTitle: string }[];
+}
+
+/** A streamed chunk of answer text, tagged with the request it belongs to. */
+export interface AnswerDelta {
+  requestId: number;
+  delta: string;
+}
+
 export interface RecentSearch {
   id: string;
   query: string;
@@ -86,6 +139,8 @@ export interface RecentSearch {
 export interface RecentSearchDetail extends RecentSearch {
   results: SearchResult[];
   rewrittenQuery?: string;
+  /** A previously generated answer, if one was saved for this search. */
+  answer?: StoredAnswer;
 }
 
 export interface SyncProgress {

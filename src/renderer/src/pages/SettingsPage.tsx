@@ -556,6 +556,12 @@ export function SettingsPage({
                   chunks are sent back for reranking.
                 </li>
                 <li>
+                  When you{" "}
+                  <span className="text-foreground">generate an answer</span>,
+                  your question and the top matching chunks are sent to Cohere
+                  to write it.
+                </li>
+                <li>
                   Your documents and embeddings are stored only on this device.
                   Cohere does not keep them.
                 </li>
@@ -564,7 +570,8 @@ export function SettingsPage({
               <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
                 <li>
                   <span className="text-foreground">Nothing.</span> Ollama runs
-                  on this machine, so your documents and queries never leave it.
+                  on this machine, so your documents, queries, and generated
+                  answers never leave it.
                 </li>
                 <li>
                   Syncing still fetches your documents from Notion or Google

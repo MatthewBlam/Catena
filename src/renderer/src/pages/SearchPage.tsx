@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { SearchInput } from "@renderer/components/search/SearchInput";
 import { ResultCard } from "@renderer/components/search/ResultCard";
 import { EmptyState } from "@renderer/components/search/EmptyState";
+import { AnswerPanel } from "@renderer/components/search/AnswerPanel";
+import type { AnswerStatus } from "@renderer/components/search/AnswerPanel";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { Button } from "@renderer/components/ui/button";
 import { getOllamaStatus } from "@renderer/lib/ollama";
@@ -12,7 +14,18 @@ import type {
   SearchResult,
   EmbeddingHealth,
   RecentSearchDetail,
+  AnswerCitation,
 } from "../../../shared/types";
+
+interface AnswerState {
+  status: AnswerStatus;
+  text: string;
+  citations: AnswerCitation[];
+  error?: string;
+  errorKind?: string;
+}
+
+const IDLE_ANSWER: AnswerState = { status: "idle", text: "", citations: [] };
 
 interface SearchPageProps {
   visible: boolean;
@@ -53,10 +66,18 @@ export function SearchPage({
   const [embeddingProvider, setEmbeddingProvider] = useState<string | null>(
     null,
   );
+  // The generated answer for the current results. Survives tab switches (the page
+  // is never unmounted while navigating) so a stream started on Search keeps
+  // filling in even while the user is on another tab.
+  const [answer, setAnswer] = useState<AnswerState>(IDLE_ANSWER);
   const queryRef = useRef(query);
   const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
   const readinessIdRef = useRef(0);
+  // Monotonic token, mirroring requestIdRef for search: a new generation, a new
+  // search, or a restore bumps it, so streamed deltas and the awaited result of a
+  // superseded generation are dropped.
+  const answerReqIdRef = useRef(0);
   // Seeded from the mount-time prop, not 0: the effect below fires on token
   // *change*, and a `restore` prop already present at mount (token >= 1,
   // e.g. App handed back a stale prop across a SearchPage remount — wizard
@@ -162,7 +183,20 @@ export function SearchPage({
   useEffect(() => {
     return () => {
       window.api.cancelSearch().catch(() => {});
+      window.api.cancelAnswer().catch(() => {});
     };
+  }, []);
+
+  // Live answer tokens. Kept in its own unguarded effect (StrictMode re-runs it
+  // cleanly) so the subscription is never torn down by an unrelated re-render.
+  // Deltas from a superseded generation carry an old requestId and are dropped.
+  useEffect(() => {
+    return window.api.onAnswerDelta((delta) => {
+      if (delta.requestId !== answerReqIdRef.current) return;
+      setAnswer((a) =>
+        a.status === "streaming" ? { ...a, text: a.text + delta.delta } : a,
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -180,6 +214,15 @@ export function SearchPage({
     setRerankFailed(false);
     setTruncated(null);
     setRestoredAt(d.updatedAt);
+    // Supersede any in-flight generation, then show the saved answer if this
+    // recent has one — otherwise offer the Generate button for a fresh one.
+    answerReqIdRef.current += 1;
+    window.api.cancelAnswer().catch(() => {});
+    setAnswer(
+      d.answer
+        ? { status: "done", text: d.answer.text, citations: d.answer.citations }
+        : IDLE_ANSWER,
+    );
   }, [restore]);
 
   // Re-render once a minute while a snapshot is shown so its "Saved results
@@ -207,6 +250,11 @@ export function SearchPage({
     setTruncated(null);
     // Any live search, including "Search again", exits snapshot mode.
     setRestoredAt(null);
+    // A fresh search invalidates the previous answer: drop it and stop any
+    // in-flight generation.
+    answerReqIdRef.current += 1;
+    window.api.cancelAnswer().catch(() => {});
+    setAnswer(IDLE_ANSWER);
 
     const id = ++requestIdRef.current;
 
@@ -235,6 +283,56 @@ export function SearchPage({
     },
     [handleSearch],
   );
+
+  const handleGenerateAnswer = useCallback(async () => {
+    if (!results || results.length === 0) return;
+    const rid = ++answerReqIdRef.current;
+    setAnswer({ status: "streaming", text: "", citations: [] });
+    // Send the query the results belong to (not the edited input), and title-only
+    // docs — main re-fetches the authoritative chunk text by id.
+    const docs = results.map((r) => ({
+      chunkId: r.chunkId,
+      documentTitle: r.documentTitle,
+    }));
+    try {
+      const res = await window.api.generateAnswer({
+        query: lastQuery,
+        requestId: rid,
+        docs,
+      });
+      // A superseded (or user-cancelled) generation is dropped: the newer request,
+      // or the Stop handler, already owns the answer state.
+      if (rid !== answerReqIdRef.current || res.cancelled) return;
+      if (res.errorKind) {
+        setAnswer({
+          status: "error",
+          text: "",
+          citations: [],
+          error: res.error,
+          errorKind: res.errorKind,
+        });
+      } else {
+        setAnswer({ status: "done", text: res.text, citations: res.citations });
+      }
+    } catch {
+      if (rid !== answerReqIdRef.current) return;
+      setAnswer({
+        status: "error",
+        text: "",
+        citations: [],
+        error: "Couldn't generate an answer. Try again.",
+        errorKind: "failed",
+      });
+    }
+  }, [results, lastQuery]);
+
+  const handleStopAnswer = useCallback(() => {
+    // Bump the token so the in-flight resolve and any late deltas are dropped,
+    // abort main-side, and return to the Generate button.
+    answerReqIdRef.current += 1;
+    window.api.cancelAnswer().catch(() => {});
+    setAnswer(IDLE_ANSWER);
+  }, []);
 
   // Key the dismissal to *which* mismatch was dismissed, not a bare boolean, so
   // a fresh mismatch (new model, different count — e.g. right after a provider
@@ -335,6 +433,20 @@ export function SearchPage({
               </div>
             ))}
           </div>
+        )}
+
+        {!loading && results !== null && results.length > 0 && (
+          <AnswerPanel
+            status={answer.status}
+            text={answer.text}
+            citations={answer.citations}
+            results={results}
+            error={answer.error}
+            errorKind={answer.errorKind}
+            onGenerate={handleGenerateAnswer}
+            onStop={handleStopAnswer}
+            onRetry={handleGenerateAnswer}
+          />
         )}
 
         {!loading && results !== null && results.length > 0 && (

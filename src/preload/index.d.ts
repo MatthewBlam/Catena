@@ -14,6 +14,20 @@ interface CommonsAPI {
    * supersedes the old one, so this is for leaving the search behind entirely.
    */
   cancelSearch(): Promise<void>;
+  /**
+   * Generates a grounded answer for a completed search. Resolves with the final
+   * text + citations; live tokens arrive via `onAnswerDelta`. Resolves (never
+   * rejects) with `cancelled: true` on abort, matching `search`.
+   */
+  generateAnswer(
+    request: import("../shared/types").AnswerRequest,
+  ): Promise<import("../shared/types").AnswerResponse>;
+  /** Stops this window's in-flight answer generation. */
+  cancelAnswer(): Promise<void>;
+  /** Streams answer tokens; each delta carries the request id it belongs to. */
+  onAnswerDelta(
+    callback: (delta: import("../shared/types").AnswerDelta) => void,
+  ): () => void;
   startNotionOAuth(): Promise<{ workspaceName: string }>;
   cancelNotionOAuth(): Promise<void>;
   listNotionPages(): Promise<import("../shared/types").NotionItemSummary[]>;
