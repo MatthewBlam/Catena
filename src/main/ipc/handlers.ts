@@ -44,7 +44,6 @@ import {
   buildEmbedConfig,
   broadcastSourcesChanged,
   broadcastRecentsChanged,
-  broadcastAnswerDelta,
   getActiveSyncProgress,
 } from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
@@ -304,8 +303,18 @@ export function registerIpcHandlers(): void {
 
       const response = await generateAnswer(request.query, docs, embedConfig, {
         signal: controller.signal,
-        onDelta: (delta) =>
-          broadcastAnswerDelta({ requestId: request.requestId, delta }),
+        // Straight to the requesting renderer, not a broadcast: an answer belongs
+        // to one window, and `requestId` is only unique within a renderer. (Sync
+        // progress broadcasts because a sync is global; an answer is not.) The
+        // window can tear down mid-stream, so guard the send.
+        onDelta: (delta) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send("answer:delta", {
+              requestId: request.requestId,
+              delta,
+            });
+          }
+        },
         ollamaChatModel:
           (getSetting(db, "ollama_chat_model") as string) || undefined,
       });
