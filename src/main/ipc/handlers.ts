@@ -282,24 +282,31 @@ export function registerIpcHandlers(): void {
     const startMs = Date.now();
 
     try {
-      // Re-fetch authoritative chunk text by id; titles ride along on the
-      // request so we avoid a chunk→document join and a second copy of the full
-      // text across the bridge. Preserve the renderer's (score/display) order,
+      // Re-fetch authoritative chunk text + heading by id; titles ride along on
+      // the request so we avoid a chunk→document join and a second copy of the
+      // full text across the bridge. The heading (the chunk's section name) is
+      // load-bearing: it is stripped from the chunk text at ingest, so without it
+      // every chunk of one document looks identically titled and the model
+      // conflates sections. Preserve the renderer's (score/display) order,
       // dropping any chunk that was removed since the search.
       const chunkIds = request.docs.map((d) => d.chunkId);
       const titleById = new Map(
         request.docs.map((d) => [d.chunkId, d.documentTitle]),
       );
-      const textById = new Map(
-        getChunksByIds(db, chunkIds).map((c) => [c.id, c.text]),
+      const chunkById = new Map(
+        getChunksByIds(db, chunkIds).map((c) => [c.id, c]),
       );
       const docs: AnswerDoc[] = chunkIds
-        .filter((id) => textById.has(id))
-        .map((id) => ({
-          chunkId: id,
-          title: titleById.get(id) ?? "",
-          text: textById.get(id) ?? "",
-        }));
+        .filter((id) => chunkById.has(id))
+        .map((id) => {
+          const chunk = chunkById.get(id)!;
+          return {
+            chunkId: id,
+            title: titleById.get(id) ?? "",
+            heading: chunk.heading,
+            text: chunk.text,
+          };
+        });
 
       const response = await generateAnswer(request.query, docs, embedConfig, {
         signal: controller.signal,

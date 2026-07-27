@@ -3,10 +3,11 @@ import { generateAnswer, type AnswerDoc } from "../answerer";
 import type { EmbedConfig } from "../embedder";
 
 const DOCS: AnswerDoc[] = [
-  { chunkId: "c0", title: "Doc Zero", text: "Zero body." },
+  { chunkId: "c0", title: "Doc Zero", heading: null, text: "Zero body." },
   {
     chunkId: "c1",
     title: "Doc One",
+    heading: "Penguins",
     text: "Emperor penguins are the tallest.",
   },
 ];
@@ -198,6 +199,38 @@ describe("generateAnswer — Ollama", () => {
     expect(deltas.join("")).toBe("The answer.");
     expect(res.citations).toEqual([]);
     expect(res.errorKind).toBeUndefined();
+  });
+
+  it("prompts Ollama with the question and titled sources, and never numbers them [n]", async () => {
+    let chatBody: { messages: { role: string; content: string }[] } | undefined;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/tags")) {
+        return Promise.resolve(
+          jsonResponse({ models: [{ name: "llama3.2:latest" }] }),
+        );
+      }
+      chatBody = JSON.parse(init!.body as string);
+      return Promise.resolve(
+        streamResponse([
+          JSON.stringify({ message: { content: "ok" }, done: true }) + "\n",
+        ]),
+      );
+    });
+
+    await generateAnswer("who was on ecoslo", DOCS, OLLAMA, {
+      onDelta: noop,
+      ollamaChatModel: "llama3.2",
+    });
+
+    const userMsg = chatBody!.messages.find((m) => m.role === "user")!.content;
+    expect(userMsg).toContain("who was on ecoslo");
+    expect(userMsg).toContain("Doc One"); // a source title
+    // The section heading is labelled so the model can tell same-document
+    // chunks apart (the fix for cross-section confabulation).
+    expect(userMsg).toContain("Penguins");
+    // Regression guard: sources must not be numbered [1]/[2] — a small model
+    // echoes those back as fake citation markers into an answer that has none.
+    expect(userMsg).not.toMatch(/\[\d+\]/);
   });
 
   it("returns a no_model degraded result when the chat model is absent", async () => {

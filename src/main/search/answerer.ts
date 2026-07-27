@@ -5,7 +5,18 @@ import type { AnswerCitation, AnswerResponse } from "../../shared/types";
 export interface AnswerDoc {
   chunkId: string;
   title: string;
+  /**
+   * The chunk's section heading, stripped from `text` at ingest. Carries the
+   * "which section is this" signal (e.g. the project name) the model needs to
+   * keep same-document chunks apart, so it is labelled alongside the title.
+   */
+  heading: string | null;
   text: string;
+}
+
+/** Labels a source by its document title and section heading (when it has one). */
+function docLabel(doc: AnswerDoc): string {
+  return doc.heading ? `${doc.title} — ${doc.heading}` : doc.title;
 }
 
 interface GenerateOptions {
@@ -140,7 +151,12 @@ async function generateWithCohere(
         { role: "user", content: query },
       ],
       documents: docs.map((d) => ({
-        data: { title: d.title, snippet: truncateDoc(d.text) },
+        data: {
+          title: d.title,
+          // The section name, when the chunk has one — see AnswerDoc.heading.
+          ...(d.heading ? { section: d.heading } : {}),
+          snippet: truncateDoc(d.text),
+        },
       })),
     }),
     signal: withTimeout(opts.signal),
@@ -187,12 +203,24 @@ async function generateWithCohere(
   return { text, citations };
 }
 
-/** Builds the manual-RAG user message Ollama gets, since it has no `documents` field. */
+/**
+ * Builds the manual-RAG user message Ollama gets, since it has no `documents`
+ * field. Sources are labelled by title, not numbered `[1]`/`[2]`: a numbered
+ * list invites the model to echo `[1]`/`[2]` into its prose as citation markers,
+ * which the Ollama path (no citation rendering) shows as dead literal tokens.
+ * The instruction is directive so a small model answers the question asked
+ * instead of hedging or restating the source list.
+ */
 function ollamaUserMessage(query: string, docs: AnswerDoc[]): string {
   const sources = docs
-    .map((d, i) => `[${i + 1}] ${d.title}\n${truncateDoc(d.text)}`)
+    .map((d) => `## ${docLabel(d)}\n${truncateDoc(d.text)}`)
     .join("\n\n");
-  return `Sources:\n\n${sources}\n\nUsing only the sources above, answer this question: ${query}`;
+  return (
+    "Answer the question using only the documents below. Give a direct, " +
+    "specific answer in plain prose, and do not add citation markers or " +
+    "source numbers. If the documents do not contain the answer, say so " +
+    `briefly.\n\n# Documents\n\n${sources}\n\n# Question\n${query}`
+  );
 }
 
 async function ollamaHasModel(
@@ -234,6 +262,9 @@ async function generateWithOllama(
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: ollamaUserMessage(query, docs) },
       ],
+      // Ollama defaults to 0.8, which encourages a small model to ramble and
+      // hedge over a grounded extraction. Pin it low for focused, factual answers.
+      options: { temperature: 0.2 },
     }),
     signal,
   });
