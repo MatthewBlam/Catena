@@ -133,6 +133,26 @@ describe("DriveConnector", () => {
     expect(docs[0].mimeType).toBe("application/vnd.google-apps.document");
   });
 
+  it("exports Google Docs as markdown so section headings survive", async () => {
+    mockFilesList.mockResolvedValue({
+      data: { files: [makeDriveFile()], nextPageToken: undefined },
+    });
+    mockFilesExport.mockResolvedValue({ data: "# ECOSLO\nAlice, Bob" });
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    const docs: RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    // Plain-text export would strip the heading; markdown keeps it, which is what
+    // the chunker needs to label each section for search and generated answers.
+    expect(mockFilesExport).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: "text/markdown" }),
+    );
+    expect(docs[0].content).toBe("# ECOSLO\nAlice, Bob");
+  });
+
   it("recursively walks subfolders", async () => {
     mockFilesList
       .mockResolvedValueOnce({

@@ -227,10 +227,14 @@ export class DriveConnector implements Connector {
     const mime = file.mimeType!;
 
     if (mime === "application/vnd.google-apps.document") {
+      // Markdown, not plain text: it preserves the doc's headings as `#` lines,
+      // which the chunker turns into per-section `heading` values. Those are what
+      // let generated answers (and keyword search) tell one section of a document
+      // from another — plain-text export drops them and sections get conflated.
       const res = await this.rateLimited(() =>
         this.drive.files.export({
           fileId: file.id!,
-          mimeType: "text/plain",
+          mimeType: "text/markdown",
         }),
       );
       return (res.data as string) ?? "";
