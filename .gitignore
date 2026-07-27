@@ -11,3 +11,5 @@ coverage/
 .eslintcache
 *.tsbuildinfo
 .DS_Store
+# pnpm project — electron-rebuild regenerates an npm lockfile we don't track.
+package-lock.json
