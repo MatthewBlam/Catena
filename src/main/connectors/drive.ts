@@ -14,6 +14,15 @@ const MAX_DEPTH = 20;
 let cachedPdfParse: typeof import("pdf-parse") | null = null;
 let cachedMammoth: typeof import("mammoth") | null = null;
 
+/**
+ * mammoth 1.12 ships `convertToMarkdown` at runtime, but its bundled type
+ * definitions declare only `convertToHtml`/`extractRawText`. The signature
+ * mirrors `convertToHtml`: a Result whose `value` is the markdown string.
+ */
+type MammothModule = typeof import("mammoth") & {
+  convertToMarkdown: (input: { buffer: Buffer }) => Promise<{ value: string }>;
+};
+
 export class DriveConnector implements Connector {
   private drive: drive_v3.Drive;
   private folderId: string;
@@ -286,8 +295,12 @@ export class DriveConnector implements Connector {
           { responseType: "arraybuffer" },
         ),
       );
-      cachedMammoth ??= await import("mammoth");
-      const result = await cachedMammoth.extractRawText({
+      // Markdown, not raw text: it preserves Word heading styles as `#` lines so
+      // the chunker can label each section — the same reason Google Docs export
+      // as markdown. Raw text would flatten headings and conflate sections.
+      const mammoth = (cachedMammoth ??=
+        await import("mammoth")) as MammothModule;
+      const result = await mammoth.convertToMarkdown({
         buffer: Buffer.from(res.data as ArrayBuffer),
       });
       return result.value ?? "";

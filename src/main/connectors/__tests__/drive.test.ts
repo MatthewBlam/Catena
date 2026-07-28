@@ -52,6 +52,7 @@ vi.mock("pdf-parse", () => ({
 
 vi.mock("mammoth", () => ({
   extractRawText: vi.fn(),
+  convertToMarkdown: vi.fn(),
 }));
 
 function makeDriveFile(
@@ -594,8 +595,10 @@ describe("DriveConnector", () => {
     expect(mockFilesList).toHaveBeenCalledTimes(2);
   });
 
-  it("handles DOCX files", async () => {
-    const mammoth = await import("mammoth");
+  it("converts DOCX files to markdown so heading styles survive", async () => {
+    const mammoth = (await import("mammoth")) as unknown as {
+      convertToMarkdown: ReturnType<typeof vi.fn>;
+    };
 
     mockFilesList.mockResolvedValue({
       data: {
@@ -614,8 +617,8 @@ describe("DriveConnector", () => {
     const docxBuffer = new ArrayBuffer(16);
     mockFilesGet.mockResolvedValue({ data: docxBuffer });
 
-    (mammoth.extractRawText as ReturnType<typeof vi.fn>).mockResolvedValue({
-      value: "Extracted DOCX text",
+    mammoth.convertToMarkdown.mockResolvedValue({
+      value: "# Overview\nExtracted DOCX text",
       messages: [],
     });
 
@@ -625,8 +628,9 @@ describe("DriveConnector", () => {
       docs.push(doc);
     }
 
+    expect(mammoth.convertToMarkdown).toHaveBeenCalled();
     expect(docs).toHaveLength(1);
-    expect(docs[0].content).toBe("Extracted DOCX text");
+    expect(docs[0].content).toBe("# Overview\nExtracted DOCX text");
   });
 });
 
