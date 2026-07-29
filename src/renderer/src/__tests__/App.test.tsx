@@ -125,6 +125,28 @@ describe("App readiness gate", () => {
     expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
   });
 
+  it("does not force onboarding when the readiness check rejects transiently", async () => {
+    // A transient IPC failure of getOnboardingComplete must NOT be treated as
+    // "not onboarded" — the old code set ready=false and dumped the user into
+    // the wizard. It now leaves `ready` untouched (null on first load), so the
+    // loading spinner stays and the wizard is never shown on a mere hiccup.
+    mockApi({ onboarded: true });
+    vi.mocked(window.api.getOnboardingComplete).mockRejectedValue(
+      new Error("IPC unavailable"),
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<App />);
+
+    // Let the rejected readiness promise settle.
+    await act(async () => {});
+
+    expect(screen.queryByText("Welcome to Commons")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Settings" }),
+    ).not.toBeInTheDocument();
+    errorSpy.mockRestore();
+  });
+
   it("still gates a fresh install behind the wizard", async () => {
     mockApi({ onboarded: false, hasCohereKey: true });
     render(<App />);

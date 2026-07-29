@@ -632,6 +632,70 @@ describe("DriveConnector", () => {
     expect(docs).toHaveLength(1);
     expect(docs[0].content).toBe("# Overview\nExtracted DOCX text");
   });
+
+  /**
+   * Drive commonly signals quota exhaustion as a 403 with a quota reason, not a
+   * 429. Those must back off and retry too — otherwise a transient rate limit
+   * aborts the whole sync.
+   */
+  it("retries a 403 whose reason is a quota reason (errors[].reason)", async () => {
+    const quota403 = Object.assign(new Error("Rate Limit Exceeded"), {
+      status: 403,
+      errors: [{ reason: "rateLimitExceeded", message: "Rate Limit Exceeded" }],
+    });
+    mockFilesList.mockRejectedValueOnce(quota403).mockResolvedValueOnce({
+      data: { files: [makeDriveFile()], nextPageToken: undefined },
+    });
+    mockFilesExport.mockResolvedValue({ data: "Recovered content" });
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    const docs: RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].content).toBe("Recovered content");
+    expect(mockFilesList).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a 403 quota reason reported under response.data.error.errors", async () => {
+    const quota403 = Object.assign(new Error("User Rate Limit Exceeded"), {
+      status: 403,
+      response: {
+        data: { error: { errors: [{ reason: "userRateLimitExceeded" }] } },
+      },
+    });
+    mockFilesList.mockRejectedValueOnce(quota403).mockResolvedValueOnce({
+      data: { files: [makeDriveFile()], nextPageToken: undefined },
+    });
+    mockFilesExport.mockResolvedValue({ data: "Recovered content" });
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    const docs: RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs).toHaveLength(1);
+    expect(mockFilesList).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry a 403 with a non-quota reason (insufficientPermissions)", async () => {
+    const perm403 = Object.assign(new Error("Insufficient Permission"), {
+      status: 403,
+      errors: [{ reason: "insufficientPermissions" }],
+    });
+    mockFilesList.mockRejectedValue(perm403);
+
+    const connector = new DriveConnector(fakeAuth, "folder-1");
+    await expect(async () => {
+      for await (const _ of connector.fetchDocuments()) {
+        // consume
+      }
+    }).rejects.toThrow("Insufficient Permission");
+    expect(mockFilesList).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("DriveConnector walk result", () => {

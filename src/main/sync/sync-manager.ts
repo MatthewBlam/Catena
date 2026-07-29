@@ -155,6 +155,11 @@ export async function syncSource(
   embedConfig: EmbedConfig,
   onProgress: (p: SyncProgress) => void,
   signal?: AbortSignal,
+  // The sync's true start, captured by `registerSync` and threaded through so
+  // every emitted event carries the same start time as the pre-first-event
+  // snapshot in `getActiveSyncProgress`. Defaulted for direct callers (tests)
+  // that don't go through the managed path.
+  startedAt: string = new Date().toISOString(),
 ): Promise<void> {
   const errors: string[] = [];
   let lastErrorsSnapshot: string[] = [];
@@ -163,7 +168,10 @@ export async function syncSource(
   const modelName = getEmbeddingModelName(embedConfig);
 
   const knownDocs = getIncrementalSyncMap(db, sourceId, modelName);
-  const skipped = knownDocs.size;
+  // Starts at every eligible doc and drops one each time the connector actually
+  // re-yields a known doc for reprocessing — so the final count is the docs left
+  // genuinely untouched, not just how many were eligible up front.
+  let skipped = knownDocs.size;
 
   function errorsSnapshot(): string[] {
     if (errors.length !== lastErrorsSnapshot.length) {
@@ -179,6 +187,7 @@ export async function syncSource(
   ): void {
     onProgress({
       sourceId,
+      startedAt,
       phase,
       current,
       skipped,
@@ -215,6 +224,10 @@ export async function syncSource(
         chunks.length === 0 || chunks[0].embeddingModel === modelName;
       if (modelMatches) return;
     }
+
+    // Past the short-circuit: this document is being reprocessed. If it was one
+    // of the known (eligible-to-skip) docs, it no longer counts as skipped.
+    if (knownDocs.has(rawDoc.externalId)) skipped--;
 
     const docId = existing?.id ?? crypto.randomUUID();
 
@@ -328,5 +341,11 @@ export async function syncSource(
     if (result.blockedReason) errors.push(result.blockedReason);
   }
 
-  emit(errors.length > 0 ? "error" : "done", null, current);
+  // A cancelled/aborted run is neither "done" nor "error": emitting a terminal
+  // event here would report a cancel as a completion to any live progress
+  // listener. The authoritative status still lands via `recordSyncOutcome` and
+  // the `sources:changed` refetch.
+  if (!signal?.aborted) {
+    emit(errors.length > 0 ? "error" : "done", null, current);
+  }
 }

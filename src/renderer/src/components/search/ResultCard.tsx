@@ -3,6 +3,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import type { SearchResult } from "../../../../shared/types";
 import { providerLabel } from "@renderer/lib/format";
+import { openExternal } from "@renderer/lib/openExternal";
 
 interface ResultCardProps {
   result: SearchResult;
@@ -46,7 +47,7 @@ export const ResultCard = memo(function ResultCard({
           <Button
             variant="ghost"
             size="xs"
-            onClick={() => void window.api.openExternal(result.url!)}
+            onClick={() => void openExternal(result.url!)}
           >
             Open source
             <ExternalLinkIcon />

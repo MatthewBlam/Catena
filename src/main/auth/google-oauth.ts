@@ -34,14 +34,20 @@ function cleanupActiveOAuth(): void {
     clearTimeout(activeTimeout);
     activeTimeout = null;
   }
+  // Reject any still-pending promise before dropping its handle. Otherwise a
+  // superseding startGoogleOAuth() (which calls this at the top) would strand
+  // the prior await forever. On a settled flow this is a guarded no-op, so the
+  // success path — which reaches here already resolved — is unaffected.
+  activeReject?.(new Error("OAuth flow superseded by a new request"));
   activeReject = null;
   activeFlowId = null;
 }
 
 export function cancelGoogleOAuth(): void {
-  const reject = activeReject;
+  // Reject with the caller-facing "canceled" reason *before* cleanup, so this
+  // settles the flow first and cleanup's own reject becomes a no-op.
+  activeReject?.(new Error("OAuth canceled"));
   cleanupActiveOAuth();
-  reject?.(new Error("OAuth canceled"));
 }
 
 export async function startGoogleOAuth(
@@ -130,16 +136,27 @@ export async function startGoogleOAuth(
         const { tokens } = await client.getToken({ code, codeVerifier });
         client.setCredentials(tokens);
 
-        const infoRes = await fetch(
-          "https://www.googleapis.com/oauth2/v2/userinfo",
-          {
-            headers: { Authorization: `Bearer ${tokens.access_token}` },
-          },
-        );
-        const userInfo = (await infoRes.json()) as { email?: string };
-        const email = userInfo.email ?? "Unknown";
-
+        // Persist the grant the instant the token exchange succeeds. The
+        // userinfo lookup below is best-effort labeling — a transient failure
+        // there (e.g. a 500 with an HTML body) must never throw away valid
+        // access/refresh tokens and force the user to redo OAuth.
         saveSecret(db, "google_tokens", JSON.stringify(tokens));
+
+        let email = "Unknown";
+        try {
+          const infoRes = await fetch(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            {
+              headers: { Authorization: `Bearer ${tokens.access_token}` },
+            },
+          );
+          if (infoRes.ok) {
+            const userInfo = (await infoRes.json()) as { email?: string };
+            email = userInfo.email ?? "Unknown";
+          }
+        } catch {
+          // Best-effort: keep the persisted grant and fall back to no label.
+        }
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(

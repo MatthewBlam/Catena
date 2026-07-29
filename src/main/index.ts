@@ -13,6 +13,8 @@ import started from "electron-squirrel-startup";
 import icon from "../../resources/icon.png?asset";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { registerSyncHandlers, cancelAllSyncs } from "./ipc/sync-handlers";
+import { registerOllamaHandlers } from "./ipc/ollama-handlers";
+import { ensureEngine, stopEngine } from "./ollama/runtime";
 import { syncScheduler } from "./sync/scheduler";
 import { getDb, closeDb } from "./db/singleton";
 import {
@@ -150,6 +152,7 @@ app
 
     registerIpcHandlers();
     registerSyncHandlers();
+    registerOllamaHandlers();
     const db = getDb();
     const staleCount = resetStalePendingDocuments(db);
     if (staleCount > 0) {
@@ -175,6 +178,18 @@ app
     });
 
     syncScheduler.start(db);
+
+    // If the user already onboarded onto local embeddings, make sure our managed
+    // engine is up so search/answers work on this launch without re-running
+    // setup. Best-effort and non-blocking: a failure here just means the user
+    // sees the normal "engine not running" state and can re-run setup. Reuses a
+    // system/manual Ollama if one is already listening (never downloads then).
+    if (getSetting(db, "embedding_provider") === "ollama") {
+      void ensureEngine(() => {}).catch((err) => {
+        console.error("Background Ollama engine start failed:", err);
+      });
+    }
+
     createWindow();
 
     app.on("activate", () => {
@@ -221,6 +236,9 @@ app.on("will-quit", (event) => {
   // half-applied transaction to close on top of.
   void cancelAllSyncs();
   syncScheduler.stop();
+  // Stop the engine only if we spawned it; a reused system/manual Ollama is
+  // left running. Synchronous kill, like the abort above.
+  stopEngine();
 
   Promise.race([
     shutdownTelemetry(),

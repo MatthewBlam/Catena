@@ -544,6 +544,56 @@ describe("syncSource", () => {
     expect(last.skipped).toBe(2);
   });
 
+  it("does not count a re-yielded, modified known doc as skipped", async () => {
+    // A non-null modifiedAt is what puts a doc into the incremental sync map
+    // (getIncrementalSyncMap filters on modified_at IS NOT NULL), which is what
+    // `skipped` is counted from — so both known docs need a timestamp here.
+    const connector1 = makeConnector([
+      {
+        externalId: "doc-1",
+        title: "Doc 1",
+        url: null,
+        mimeType: null,
+        modifiedAt: "2026-01-01T00:00:00Z",
+        content: "# Heading\nContent one.",
+      },
+      {
+        externalId: "doc-2",
+        title: "Doc 2",
+        url: null,
+        mimeType: null,
+        modifiedAt: "2026-01-01T00:00:00Z",
+        content: "# Heading\nContent two.",
+      },
+    ]);
+
+    await syncSource(db, "src-1", "notion", connector1, testConfig, () => {});
+
+    const progress: SyncProgress[] = [];
+    // Both docs are known. doc-1 is unchanged (not re-yielded); doc-2 changed
+    // and the connector re-yields it. Only doc-1 is genuinely skipped.
+    const connector2 = makeConnector(
+      [
+        {
+          externalId: "doc-2",
+          title: "Doc 2",
+          url: null,
+          mimeType: null,
+          modifiedAt: "2026-02-01T00:00:00Z",
+          content: "# Heading\nContent two, revised.",
+        },
+      ],
+      { seenExternalIds: new Set(["doc-1", "doc-2"]) },
+    );
+
+    await syncSource(db, "src-1", "notion", connector2, testConfig, (p) =>
+      progress.push(p),
+    );
+
+    const last = progress[progress.length - 1];
+    expect(last.skipped).toBe(1);
+  });
+
   it("incremental sync map excludes docs with wrong embedding model", async () => {
     const connector = makeConnector([
       {

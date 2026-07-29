@@ -48,8 +48,32 @@ export class NotionConnector implements Connector {
   ): AsyncGenerator<RawDocument, SyncWalkResult> {
     this.seen = new Set();
     this.complete = true;
-    yield* this.walkPage(this.rootPageId, 0, new Set(), knownDocs, signal);
+    const visited = new Set<string>();
+    // The root can itself be a database — listNotionItems surfaces databases as
+    // selectable roots — so walking it blindly as a page would throw. Probe first
+    // and walk it with the matching routine.
+    if (await this.isDatabase(this.rootPageId)) {
+      yield* this.walkDatabase(this.rootPageId, 0, visited, knownDocs, signal);
+    } else {
+      yield* this.walkPage(this.rootPageId, 0, visited, knownDocs, signal);
+    }
     return { seenExternalIds: this.seen, complete: this.complete };
+  }
+
+  /**
+   * Whether `id` names a database (vs a page). A failed probe means "not a
+   * database we can retrieve" — walk it as a page, which surfaces any real
+   * permission error itself.
+   */
+  private async isDatabase(id: string): Promise<boolean> {
+    try {
+      const obj = await this.rateLimited(() =>
+        this.client.databases.retrieve({ database_id: id }),
+      );
+      return isFullDatabase(obj);
+    } catch {
+      return false;
+    }
   }
 
   private async *walkPage(
@@ -148,50 +172,56 @@ export class NotionConnector implements Connector {
       return;
     }
 
-    const dataSourceId = await this.resolveDataSourceId(databaseId);
+    // A database can expose more than one data source. Querying only the first
+    // silently drops every row of the others — yet the walk still reports
+    // complete, so reconciliation would DELETE those docs. Iterate them all and
+    // union the pages into `seen`.
+    const dataSourceIds = await this.resolveDataSourceIds(databaseId);
 
-    let cursor: string | undefined;
-    do {
-      const response = await this.rateLimited(() =>
-        this.client.dataSources.query({
-          data_source_id: dataSourceId,
-          start_cursor: cursor,
-          page_size: 100,
-        }),
-      );
+    for (const dataSourceId of dataSourceIds) {
+      let cursor: string | undefined;
+      do {
+        const response = await this.rateLimited(() =>
+          this.client.dataSources.query({
+            data_source_id: dataSourceId,
+            start_cursor: cursor,
+            page_size: 100,
+          }),
+        );
 
-      for (const result of response.results) {
-        if ("url" in result) {
-          yield* this.walkPage(
-            result.id,
-            depth + 1,
-            visited,
-            knownDocs,
-            signal,
-          );
+        for (const result of response.results) {
+          if ("url" in result) {
+            yield* this.walkPage(
+              result.id,
+              depth + 1,
+              visited,
+              knownDocs,
+              signal,
+            );
+          }
         }
-      }
 
-      cursor = response.has_more
-        ? (response.next_cursor ?? undefined)
-        : undefined;
+        cursor = response.has_more
+          ? (response.next_cursor ?? undefined)
+          : undefined;
 
-      if (signal?.aborted && cursor) {
-        // Pages we never paginated to are unseen, not deleted.
-        this.complete = false;
-        return;
-      }
-    } while (cursor);
+        if (signal?.aborted && cursor) {
+          // Pages we never paginated to are unseen, not deleted.
+          this.complete = false;
+          return;
+        }
+      } while (cursor);
+    }
   }
 
-  private async resolveDataSourceId(databaseId: string): Promise<string> {
+  private async resolveDataSourceIds(databaseId: string): Promise<string[]> {
     const db = await this.rateLimited(() =>
       this.client.databases.retrieve({ database_id: databaseId }),
     );
     if (isFullDatabase(db) && db.data_sources.length > 0) {
-      return db.data_sources[0].id;
+      return db.data_sources.map((ds) => ds.id);
     }
-    return databaseId;
+    return [databaseId];
   }
 
   private async fetchAllBlocks(

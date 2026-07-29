@@ -10,14 +10,29 @@ import {
   buildEmbedConfig,
   registerSync,
   runManagedSync,
+  AUTO_SYNC_DISABLED,
 } from "../ipc/sync-handlers";
 import type { SchedulerState } from "../../shared/types";
 
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
+const MIN_INTERVAL_MS = 60_000;
+const MAX_INTERVAL_MS = 24 * 60 * 60_000;
+
+/**
+ * How long after launch an overdue catch-up sync waits before firing. A short
+ * grace so the app finishes starting up (windows, and a managed Ollama engine
+ * coming online) before the first tick runs.
+ */
+const STARTUP_SYNC_DELAY_MS = 10_000;
+
+function clampInterval(ms: number): number {
+  return Math.max(MIN_INTERVAL_MS, Math.min(ms, MAX_INTERVAL_MS));
+}
 
 class SyncScheduler {
   private db: Database.Database | null = null;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private startupHandle: ReturnType<typeof setTimeout> | null = null;
   private abortController: AbortController | null = null;
   private running = false;
   private enabled = false;
@@ -40,14 +55,36 @@ class SyncScheduler {
 
     this.db = db;
     this.enabled = getSetting(db, "auto_sync_enabled") === "true";
-    this.intervalMs =
+    // Clamp on load the same way `setIntervalMs` clamps on write — a stored
+    // value from an older build, a migration, or a hand-edited DB must not
+    // schedule an out-of-range (e.g. sub-minute) tick.
+    this.intervalMs = clampInterval(
       parseInt(getSetting(db, "auto_sync_interval_ms") ?? "", 10) ||
-      DEFAULT_INTERVAL_MS;
+        DEFAULT_INTERVAL_MS,
+    );
     this.lastSyncedAt = getSetting(db, "auto_sync_last_synced_at") ?? null;
 
     if (this.enabled) {
       this.scheduleInterval();
+      // Catch up shortly after launch when a sync is overdue — never synced, or
+      // the app was closed for longer than an interval. Without this the first
+      // tick waits a full interval, so short sessions never auto-sync at all.
+      // Cleared by `clearInterval()` if the scheduler stops or is reconfigured
+      // before it fires; the `running` guard keeps it from overlapping a tick.
+      if (this.isSyncOverdue()) {
+        this.startupHandle = setTimeout(
+          () => void this.tick(),
+          STARTUP_SYNC_DELAY_MS,
+        );
+      }
     }
+  }
+
+  private isSyncOverdue(): boolean {
+    if (!this.lastSyncedAt) return true;
+    const last = Date.parse(this.lastSyncedAt);
+    if (Number.isNaN(last)) return true;
+    return Date.now() - last >= this.intervalMs;
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
@@ -58,13 +95,20 @@ class SyncScheduler {
     if (enabled) {
       this.scheduleInterval();
     } else {
+      // Not just descheduling: a tick already running keeps making billable API
+      // calls until it is told to stop. Abort it the way `stop()` does, but leave
+      // `this.db` in place so the scheduler can be re-enabled later. The
+      // `AUTO_SYNC_DISABLED` reason tells the outcome recorder this interruption
+      // is not a per-source cancellation, so the in-flight source keeps its prior
+      // status instead of flipping to "canceled".
       this.clearInterval();
+      this.abortCurrentTick(AUTO_SYNC_DISABLED);
     }
   }
 
   setIntervalMs(ms: number): void {
     if (!this.db) return;
-    const clamped = Math.max(60_000, Math.min(ms, 24 * 60 * 60_000));
+    const clamped = clampInterval(ms);
     this.intervalMs = clamped;
     upsertSetting(this.db, "auto_sync_interval_ms", String(clamped));
 
@@ -76,15 +120,24 @@ class SyncScheduler {
 
   stop(): void {
     this.clearInterval();
-    this.abortController?.abort();
-    this.abortController = null;
+    this.abortCurrentTick();
     this.db = null;
+  }
 
-    // `running` used to stay true for the whole unwind window, which had two
-    // consequences: `getState().syncing` lied, and a `start()` inside that
-    // window hit `if (this.running) return` and silently skipped its first
-    // tick. The scheduler is stopped the moment it is told to stop; the tick
-    // that is still unwinding belongs to the previous generation now.
+  /**
+   * Aborts the in-flight tick (and, via the tick's abort listener, every
+   * per-source controller) and retires its generation, without touching the
+   * interval or `this.db`. Shared by `stop()` and `setEnabled(false)`.
+   *
+   * `running` used to stay true for the whole unwind window, which had two
+   * consequences: `getState().syncing` lied, and a `start()` inside that window
+   * hit `if (this.running) return` and silently skipped its first tick. The
+   * scheduler is stopped the moment it is told to stop; the tick that is still
+   * unwinding belongs to the previous generation now.
+   */
+  private abortCurrentTick(reason?: unknown): void {
+    this.abortController?.abort(reason);
+    this.abortController = null;
     this.running = false;
     this.generation++;
   }
@@ -100,13 +153,19 @@ class SyncScheduler {
 
   private scheduleInterval(): void {
     this.clearInterval();
-    this.intervalHandle = setInterval(() => this.tick(), this.intervalMs);
+    this.intervalHandle = setInterval(() => void this.tick(), this.intervalMs);
   }
 
   private clearInterval(): void {
     if (this.intervalHandle) {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
+    }
+    // The startup catch-up shares this teardown so stopping or reconfiguring the
+    // scheduler cancels a pending catch-up that has not fired yet.
+    if (this.startupHandle) {
+      clearTimeout(this.startupHandle);
+      this.startupHandle = null;
     }
   }
 
@@ -140,26 +199,40 @@ class SyncScheduler {
         // telemetry either.
         if (!getSourceById(db, source.id)) continue;
 
-        const { controller, finish } = registerSync(source.id);
-        signal.addEventListener("abort", () => controller.abort(), {
-          once: true,
-        });
+        const { controller, finish, startedAt } = registerSync(source.id);
+        // Bridge the tick's master signal onto this source, propagating the
+        // abort *reason* so a "disabled" stop stays distinguishable from a user
+        // cancel. Removed as soon as the source finishes, so listeners don't
+        // pile up on the tick signal across a many-source run.
+        const onTickAbort = (): void => controller.abort(signal.reason);
+        signal.addEventListener("abort", onTickAbort, { once: true });
 
-        const succeeded = await runManagedSync(
-          db,
-          source,
-          embedConfig,
-          controller,
-          finish,
-          {
-            trigger: "auto",
-            onError: (err) => {
-              console.error(`Auto-sync failed for source ${source.id}:`, err);
+        try {
+          const succeeded = await runManagedSync(
+            db,
+            source,
+            embedConfig,
+            controller,
+            finish,
+            startedAt,
+            {
+              trigger: "auto",
+              onError: (err) => {
+                console.error(`Auto-sync failed for source ${source.id}:`, err);
+              },
             },
-          },
-        );
-        if (succeeded) anySuccess = true;
+          );
+          if (succeeded) anySuccess = true;
+        } finally {
+          signal.removeEventListener("abort", onTickAbort);
+        }
       }
+    } catch (err) {
+      // The per-source path records its own outcome; this catches a failure in
+      // the pre-loop setup (`getAllSources`, or `buildEmbedConfig` — which throws
+      // when the OS keychain is unavailable) so it cannot escape as an unhandled
+      // rejection out of the un-awaited interval/startup callback and repeat.
+      console.error("Auto-sync tick failed:", err);
     } finally {
       // A tick from a previous generation owns none of this any more. `stop()`
       // already set `running = false`, and a tick that started after us may now

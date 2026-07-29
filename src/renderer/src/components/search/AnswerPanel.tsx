@@ -1,5 +1,7 @@
 import { SparklesIcon, SquareIcon, RotateCcwIcon } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
+import { OllamaChatModelButton } from "@renderer/components/setup/OllamaChatModelButton";
+import { openExternal } from "@renderer/lib/openExternal";
 import type { AnswerCitation, SearchResult } from "../../../../shared/types";
 
 export type AnswerStatus = "idle" | "streaming" | "done" | "error";
@@ -33,7 +35,7 @@ function CitationMarker({
   return (
     <button
       type="button"
-      onClick={() => void window.api.openExternal(url)}
+      onClick={() => void openExternal(url)}
       aria-label={`Open source ${n}`}
       className="ml-0.5 cursor-pointer align-super text-[0.7em] text-primary hover:underline"
     >
@@ -80,15 +82,21 @@ function renderAnswerBody(
   let cursor = 0;
   let key = 0;
   for (const group of ordered) {
-    if (group.end <= cursor) continue; // overlaps an earlier marker — skip
-    nodes.push(<span key={key++}>{text.slice(cursor, group.end)}</span>);
+    // Only emit body text — and advance — when this group ends past the cursor.
+    // A distinct group that shares its end offset with an earlier one (same
+    // `end`, different `start`) has no new text to contribute, but its markers
+    // must still render: skipping the whole group here silently dropped a valid
+    // citation. Guard the text slice, not the markers.
+    if (group.end > cursor) {
+      nodes.push(<span key={key++}>{text.slice(cursor, group.end)}</span>);
+      cursor = group.end;
+    }
     for (const chunkId of group.chunkIds) {
       const idx = indexByChunk.get(chunkId)!;
       nodes.push(
         <CitationMarker key={key++} n={idx + 1} url={results[idx].url} />,
       );
     }
-    cursor = group.end;
   }
   if (cursor < text.length) {
     nodes.push(<span key={key++}>{text.slice(cursor)}</span>);
@@ -175,6 +183,13 @@ export function AnswerPanel({
         <p className="text-sm text-muted-foreground leading-relaxed">
           {error ?? "Couldn't generate an answer. Try again."}
         </p>
+        {/* A missing chat model is a one-click fix now: download it, then retry
+            generating the answer. */}
+        {isNoModel && (
+          <div className="pt-1">
+            <OllamaChatModelButton onInstalled={onRetry} />
+          </div>
+        )}
       </AnswerCard>
     );
   }

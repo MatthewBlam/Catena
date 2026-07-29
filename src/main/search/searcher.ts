@@ -154,18 +154,27 @@ function scanVectors(
   const scratch = new Float32Array(queryEmbedding.length);
 
   // `for…of` calls .return() on the generator on *any* abrupt exit — the `break`
-  // below, or a throw out of cosineSimilarity — and that is what closes the
-  // underlying statement. Do not rewrite this as a manual .next() loop without
-  // closing the iterator yourself: an abandoned one leaves the connection busy
-  // and every subsequent write fails.
+  // below — and that is what closes the underlying statement. (A per-row throw is
+  // caught in the loop, so it never abandons the iterator.) Do not rewrite this as
+  // a manual .next() loop without closing the iterator yourself: an abandoned one
+  // leaves the connection busy and every subsequent write fails.
   for (const chunk of iterateChunksWithEmbeddingsByModel(db, model)) {
     scanned++;
-    const score = cosineSimilarity(
-      queryEmbedding,
-      decodeEmbeddingInto(chunk.embedding, scratch),
-    );
-    if (Number.isFinite(score))
-      insertTopK(top, { id: chunk.id, score }, COSINE_TOP_K);
+    // One row whose stored embedding is a different dimension than the query —
+    // corruption, or an embedding written under a since-changed model — makes
+    // cosineSimilarity throw. That is a bad *row*, not a bad *search*: skip it,
+    // the same way the Number.isFinite guard skips a row that scores NaN, rather
+    // than letting the throw reject the whole query.
+    try {
+      const score = cosineSimilarity(
+        queryEmbedding,
+        decodeEmbeddingInto(chunk.embedding, scratch),
+      );
+      if (Number.isFinite(score))
+        insertTopK(top, { id: chunk.id, score }, COSINE_TOP_K);
+    } catch {
+      // dimension mismatch (or an otherwise undecodable row) — skip and continue
+    }
     if (scanned >= maxScan) break;
   }
 

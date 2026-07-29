@@ -22,6 +22,7 @@ function fakeWindow(): FakeWindow {
   return win;
 }
 
+import { ipcMain } from "electron";
 import {
   activeSyncs,
   registerSync,
@@ -31,6 +32,9 @@ import {
   publishSyncProgress,
   broadcastSourcesChanged,
   getActiveSyncProgress,
+  registerSyncHandlers,
+  setClearingAllData,
+  AUTO_SYNC_DISABLED,
   type SyncOutcomeInput,
 } from "../sync-handlers";
 import { createTestDb } from "../../db/__tests__/test-db";
@@ -162,6 +166,35 @@ describe("cancelSync (M5)", () => {
   });
 });
 
+describe("clear-all-data guard", () => {
+  function getSyncStartHandler(): (
+    event: unknown,
+    sourceId: string,
+  ) => Promise<unknown> {
+    registerSyncHandlers();
+    const call = (ipcMain.handle as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([channel]) => channel === "sync:start",
+    );
+    return call![1] as (event: unknown, sourceId: string) => Promise<unknown>;
+  }
+
+  it("ignores a sync:start dispatched while clear-all-data is in progress", async () => {
+    const handler = getSyncStartHandler();
+
+    setClearingAllData(true);
+    try {
+      // Returns before it ever reaches `getDb()` / `registerSync`, so no sync is
+      // registered against the database that is about to be wiped.
+      const result = await handler({}, "s1");
+      expect(result).toBeUndefined();
+      expect(activeSyncs.has("s1")).toBe(false);
+      expect(activeSyncs.size).toBe(0);
+    } finally {
+      setClearingAllData(false);
+    }
+  });
+});
+
 describe("recordSyncOutcome (H3)", () => {
   let db: Database.Database;
 
@@ -179,6 +212,7 @@ describe("recordSyncOutcome (H3)", () => {
 
   const progress = (errors: string[]): SyncProgress => ({
     sourceId: "s1",
+    startedAt: "2024-01-01T00:00:00Z",
     phase: errors.length > 0 ? "error" : "done",
     current: 10,
     skipped: 0,
@@ -276,6 +310,23 @@ describe("recordSyncOutcome (H3)", () => {
     expect(getSourceById(db, "s1")!.lastSyncStatus).toBe("cancelled");
   });
 
+  it("leaves the prior status untouched when a background tick is aborted by disabling auto-sync", () => {
+    // Give the source a real status to preserve.
+    recordSyncOutcome(db, "s1", outcome({ lastProgress: progress([]) }), false);
+    expect(getSourceById(db, "s1")!.lastSyncStatus).toBe("ok");
+
+    // Turning auto-sync off mid-tick aborts this source, but that is not a
+    // per-source cancellation — its status must NOT flip to "cancelled".
+    recordSyncOutcome(
+      db,
+      "s1",
+      outcome({ thrown: new Error("aborted") }),
+      true,
+      AUTO_SYNC_DISABLED,
+    );
+    expect(getSourceById(db, "s1")!.lastSyncStatus).toBe("ok");
+  });
+
   it("stores at most 5 error lines but counts all of them", () => {
     const errors = Array.from({ length: 12 }, (_, i) => `Doc ${i}: failed`);
     recordSyncOutcome(
@@ -302,6 +353,7 @@ describe("recordSyncOutcome (H3)", () => {
 describe("progress broadcast and hydration (H7)", () => {
   const makeProgress = (o: Partial<SyncProgress> = {}): SyncProgress => ({
     sourceId: "s1",
+    startedAt: "2024-01-01T00:00:00Z",
     phase: "embedding",
     current: 3,
     skipped: 0,
@@ -396,6 +448,11 @@ describe("progress broadcast and hydration (H7)", () => {
     const active = getActiveSyncProgress();
     expect(active).toHaveLength(1);
     expect(active[0]).toMatchObject({ sourceId: "s1", phase: "fetching" });
+    // The synthesized snapshot still carries the registration start time, so a
+    // panel mounting before the first event can count elapsed from the true
+    // start rather than from mount.
+    expect(active[0].startedAt).toBeTruthy();
+    expect(Number.isNaN(Date.parse(active[0].startedAt))).toBe(false);
 
     sync.release();
     await sync.ran;

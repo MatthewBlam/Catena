@@ -100,9 +100,12 @@ function App(): React.JSX.Element {
         }
       })
       .catch((err) => {
+        // A transient IPC failure is NOT a genuine "not onboarded" — forcing
+        // ready=false here dropped an already-onboarded user into the wizard on
+        // a hiccup. Only a SUCCESSFUL `false` gates onboarding, so leave `ready`
+        // unchanged. On first load it is still null (the loading spinner stays)
+        // until a call actually succeeds.
         console.error("Failed to check readiness:", err);
-        setReady(false);
-        setVisited(new Set(["search"]));
       });
   }, []);
 

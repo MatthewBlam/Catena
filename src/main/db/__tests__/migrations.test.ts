@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import DatabaseCtor from "better-sqlite3";
@@ -249,9 +255,10 @@ describe("pre-migration backup", () => {
     runMigrations(db, dbPath);
     db.close();
 
+    // The pre-migration state was v5, so the backup is named for that version.
     // A plain copyFileSync of the .db would miss this row entirely — it is
     // still in commons.db-wal at this point.
-    const backup = new DatabaseCtor(`${dbPath}.pre-migration.bak`, {
+    const backup = new DatabaseCtor(`${dbPath}.backup-v5.db`, {
       readonly: true,
     });
     const row = backup
@@ -262,7 +269,7 @@ describe("pre-migration backup", () => {
     expect(row?.name).toBe("Only In WAL");
   });
 
-  it("overwrites a backup left by a previous upgrade", () => {
+  it("does not overwrite a backup taken at an earlier source version", () => {
     const db = new DatabaseCtor(dbPath);
     db.pragma("journal_mode = WAL");
     migrateTo(db, 5);
@@ -270,15 +277,23 @@ describe("pre-migration backup", () => {
       "INSERT INTO sources (id, provider, name, root_external_id, created_at) VALUES ('s1','notion','S','ext1','2024-01-01T00:00:00Z')",
     ).run();
 
-    // A stale backup from an earlier upgrade. VACUUM INTO refuses a target that
-    // already exists, so this has to be cleared rather than fail the migration.
-    writeFileSync(`${dbPath}.pre-migration.bak`, "stale garbage");
+    // The pre-migration backup from an *earlier* upgrade (this install once
+    // migrated up from v4). It is the only rollback point for that state, and a
+    // subsequent migration re-run must not touch it — the bug was a fixed backup
+    // path that overwrote it with the already-partially-migrated DB.
+    const earlierBackup = `${dbPath}.backup-v4.db`;
+    writeFileSync(earlierBackup, "earlier-version-backup-sentinel");
 
     expect(() => runMigrations(db, dbPath)).not.toThrow();
     db.close();
 
-    expect(existsSync(`${dbPath}.pre-migration.bak`)).toBe(true);
-    const backup = new DatabaseCtor(`${dbPath}.pre-migration.bak`, {
+    // The earlier-version backup survives untouched...
+    expect(readFileSync(earlierBackup, "utf8")).toBe(
+      "earlier-version-backup-sentinel",
+    );
+    // ...and this run took its own, named for the v5 state it started from.
+    expect(existsSync(`${dbPath}.backup-v5.db`)).toBe(true);
+    const backup = new DatabaseCtor(`${dbPath}.backup-v5.db`, {
       readonly: true,
     });
     const count = (

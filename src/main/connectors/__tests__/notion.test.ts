@@ -518,11 +518,19 @@ describe("NotionConnector", () => {
         next_cursor: null,
       });
 
-    mockClient.databases.retrieve.mockResolvedValue({
-      object: "database",
-      id: "db-1",
-      data_sources: [{ id: "ds-1", name: "My DB" }],
-    });
+    // Only the child database "db-1" is a database; the root is a page. The
+    // root-detection probe in fetchDocuments retrieves the root as a database
+    // first, so this must resolve to a non-database for anything but "db-1".
+    mockClient.databases.retrieve.mockImplementation(
+      ({ database_id }: { database_id: string }) =>
+        database_id === "db-1"
+          ? Promise.resolve({
+              object: "database",
+              id: "db-1",
+              data_sources: [{ id: "ds-1", name: "My DB" }],
+            })
+          : Promise.resolve(undefined),
+    );
 
     mockClient.dataSources.query.mockResolvedValue({
       results: [makePage("db-page-1", "DB Entry")],
@@ -538,6 +546,91 @@ describe("NotionConnector", () => {
 
     expect(docs).toHaveLength(2);
     expect(docs[1].title).toBe("DB Entry");
+  });
+
+  it("walks a database chosen as the root source instead of throwing", async () => {
+    // listNotionItems surfaces databases as selectable roots. Retrieving such a
+    // root as a page would throw; fetchDocuments must detect the database and
+    // walk it as one. The root id here IS the database.
+    mockClient.databases.retrieve.mockResolvedValue({
+      object: "database",
+      id: "root-db",
+      data_sources: [{ id: "ds-1", name: "Root DB" }],
+    });
+    mockClient.dataSources.query.mockResolvedValue({
+      results: [makePage("db-page-1", "DB Entry")],
+      has_more: false,
+      next_cursor: null,
+    });
+    mockClient.pages.retrieve.mockResolvedValue(
+      makePage("db-page-1", "DB Entry"),
+    );
+    mockClient.blocks.children.list.mockResolvedValue({
+      results: [
+        makeBlock("paragraph", { rich_text: makeRichText("Row body") }),
+      ],
+      has_more: false,
+      next_cursor: null,
+    });
+
+    const connector = new NotionConnector("test-token", "root-db", 0);
+    const docs: import("../../sync/sync-manager").RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].title).toBe("DB Entry");
+  });
+
+  it("yields pages from every data source of a multi-source database root", async () => {
+    // A database with two data sources: querying only the first would silently
+    // drop the second's rows — and because the walk still reports complete,
+    // reconciliation would then delete them. Both must be yielded.
+    mockClient.databases.retrieve.mockResolvedValue({
+      object: "database",
+      id: "root-db",
+      data_sources: [
+        { id: "ds-1", name: "Source One" },
+        { id: "ds-2", name: "Source Two" },
+      ],
+    });
+    mockClient.dataSources.query.mockImplementation(
+      ({ data_source_id }: { data_source_id: string }) =>
+        Promise.resolve({
+          results:
+            data_source_id === "ds-1"
+              ? [makePage("page-a", "Page A")]
+              : [makePage("page-b", "Page B")],
+          has_more: false,
+          next_cursor: null,
+        }),
+    );
+    mockClient.pages.retrieve.mockImplementation(
+      ({ page_id }: { page_id: string }) =>
+        Promise.resolve(
+          makePage(page_id, page_id === "page-a" ? "Page A" : "Page B"),
+        ),
+    );
+    mockClient.blocks.children.list.mockResolvedValue({
+      results: [],
+      has_more: false,
+      next_cursor: null,
+    });
+
+    const connector = new NotionConnector("test-token", "root-db", 0);
+    const docs: import("../../sync/sync-manager").RawDocument[] = [];
+    for await (const doc of connector.fetchDocuments()) {
+      docs.push(doc);
+    }
+
+    expect(docs.map((d) => d.externalId).sort()).toEqual(["page-a", "page-b"]);
+    expect(mockClient.dataSources.query).toHaveBeenCalledWith(
+      expect.objectContaining({ data_source_id: "ds-1" }),
+    );
+    expect(mockClient.dataSources.query).toHaveBeenCalledWith(
+      expect.objectContaining({ data_source_id: "ds-2" }),
+    );
   });
 });
 

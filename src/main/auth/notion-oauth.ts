@@ -32,14 +32,20 @@ function cleanupActiveOAuth(): void {
     clearTimeout(activeTimeout);
     activeTimeout = null;
   }
+  // Reject any still-pending promise before dropping its handle. Otherwise a
+  // superseding startNotionOAuth() (which calls this at the top) would strand
+  // the prior await forever. On a settled flow this is a guarded no-op, so the
+  // success path — which reaches here already resolved — is unaffected.
+  activeReject?.(new Error("OAuth flow superseded by a new request"));
   activeReject = null;
   activeFlowId = null;
 }
 
 export function cancelNotionOAuth(): void {
-  const reject = activeReject;
+  // Reject with the caller-facing "canceled" reason *before* cleanup, so this
+  // settles the flow first and cleanup's own reject becomes a no-op.
+  activeReject?.(new Error("OAuth canceled"));
   cleanupActiveOAuth();
-  reject?.(new Error("OAuth canceled"));
 }
 
 /**

@@ -11,6 +11,42 @@ const MAX_PDF_PAGES = 200;
 const THROTTLE_MS = 100; // ~12k requests per 100s quota
 const MAX_DEPTH = 20;
 
+const QUOTA_REASONS = new Set([
+  "userRateLimitExceeded",
+  "rateLimitExceeded",
+  "dailyLimitExceeded",
+]);
+
+/**
+ * A Drive 403 is only rate-limiting when its error reason says so — a plain
+ * permission 403 (e.g. `insufficientPermissions`) must NOT be retried. The
+ * googleapis client surfaces the reason on `err.errors[].reason` and also under
+ * `err.response.data.error.errors[].reason`; check both.
+ */
+function isQuota403(status: number, err: unknown): boolean {
+  if (status !== 403) return false;
+  if (!(err instanceof Object)) return false;
+
+  const buckets: unknown[] = [];
+  if ("errors" in err) buckets.push((err as { errors: unknown }).errors);
+  const response = (
+    err as { response?: { data?: { error?: { errors?: unknown } } } }
+  ).response;
+  if (response?.data?.error?.errors) buckets.push(response.data.error.errors);
+
+  for (const bucket of buckets) {
+    if (!Array.isArray(bucket)) continue;
+    for (const entry of bucket) {
+      const reason =
+        entry instanceof Object && "reason" in entry
+          ? (entry as { reason?: unknown }).reason
+          : undefined;
+      if (typeof reason === "string" && QUOTA_REASONS.has(reason)) return true;
+    }
+  }
+  return false;
+}
+
 let cachedPdfParse: typeof import("pdf-parse") | null = null;
 let cachedMammoth: typeof import("mammoth") | null = null;
 
@@ -55,7 +91,9 @@ export class DriveConnector implements Connector {
         err instanceof Object && "status" in err
           ? (err as { status: number }).status
           : 0;
-      if (status === 429 && retries > 0) {
+      // Drive commonly signals quota exhaustion as a 403 with a quota reason
+      // rather than a 429. Those must back off and retry too, not abort the sync.
+      if ((status === 429 || isQuota403(status, err)) && retries > 0) {
         const delay = Math.pow(2, 3 - retries) * 1000;
         await new Promise((r) => setTimeout(r, delay));
         return this.rateLimited(fn, retries - 1);

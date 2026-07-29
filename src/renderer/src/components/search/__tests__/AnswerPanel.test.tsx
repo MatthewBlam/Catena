@@ -107,6 +107,33 @@ describe("AnswerPanel", () => {
     expect(screen.getByText("[2]")).toBeInTheDocument();
   });
 
+  it("renders both markers when two citations share an end offset", () => {
+    // Two distinct spans ending at the same offset (7): grouped separately by
+    // `${start}:${end}`. The old `group.end <= cursor` skip dropped the second
+    // group's markers because the first already advanced the cursor to 7. Both
+    // markers must render, and the body text must stay intact.
+    const citations: AnswerCitation[] = [
+      { start: 0, end: 7, chunkId: "c0" },
+      { start: 4, end: 7, chunkId: "c1" },
+    ];
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="done"
+        text="Emperor penguins are tall."
+        citations={citations}
+      />,
+    );
+    // c0 (index 0) has a url → clickable [1]; c1 (index 1) has none → plain [2].
+    expect(
+      screen.getByRole("button", { name: "Open source 1" }),
+    ).toHaveTextContent("[1]");
+    expect(screen.getByText("[2]")).toBeInTheDocument();
+    // Body text is neither duplicated nor dropped.
+    expect(document.body.textContent).toContain("Emperor");
+    expect(document.body.textContent).toContain("penguins are tall.");
+  });
+
   it("drops a citation whose chunk is not in the results", () => {
     const citations: AnswerCitation[] = [{ start: 0, end: 4, chunkId: "gone" }];
     render(

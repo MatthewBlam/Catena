@@ -50,6 +50,13 @@ async function runConcurrent<T>(
   const active = new Set<Promise<void>>();
   for (const item of items) {
     const p = fn(item).finally(() => active.delete(p));
+    // Observe every batch's settlement independently. When 2+ in-flight batches
+    // reject, `await Promise.race(active)` throws on the first and unwinds before
+    // the trailing `Promise.all(active)` runs — so the other rejections would go
+    // unawaited and surface as an unhandledRejection in the Electron main
+    // process. This no-op observer marks `p` handled; `p` is still the real
+    // promise `race`/`all` track, so error propagation and the limit are intact.
+    void p.catch(() => {});
     active.add(p);
     if (active.size >= limit) await Promise.race(active);
   }

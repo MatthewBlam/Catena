@@ -169,8 +169,19 @@ const LATEST_VERSION = Math.max(...migrations.map((m) => m.version));
  * and can be missing entire tables. VACUUM INTO writes one self-contained,
  * transactionally consistent file.
  */
-function backupBeforeMigration(db: Database.Database, dbPath: string): void {
-  const backupPath = `${dbPath}.pre-migration.bak`;
+function backupBeforeMigration(
+  db: Database.Database,
+  dbPath: string,
+  currentVersion: number,
+): void {
+  // One backup per *source* version, so a partial migration failure cannot
+  // destroy the pre-migration rollback point. A fixed path would be overwritten
+  // on the next launch — by then the DB has already advanced past some
+  // migrations — clobbering the only good copy. Each migration commits its own
+  // version transactionally, so `currentVersion` always names a good state, and
+  // re-taking the same-version backup (a re-run that made no progress) is a
+  // harmless rewrite of an identical snapshot.
+  const backupPath = `${dbPath}.backup-v${currentVersion}.db`;
   rmSync(backupPath, { force: true }); // VACUUM INTO refuses an existing target
   db.prepare("VACUUM INTO ?").run(backupPath);
 }
@@ -204,7 +215,7 @@ export function runMigrations(db: Database.Database, dbPath?: string): void {
   // Failing to start is recoverable; a half-migrated corpus with no backup is not.
   if (dbPath) {
     try {
-      backupBeforeMigration(db, dbPath);
+      backupBeforeMigration(db, dbPath, currentVersion);
     } catch (err) {
       throw new Error(
         `Could not back up the database before upgrading it (${err instanceof Error ? err.message : String(err)}). ` +

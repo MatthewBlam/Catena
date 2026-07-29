@@ -77,6 +77,23 @@ describe("chunkText", () => {
     }
   });
 
+  it("does not exceed the max token limit when two near-cap sentences abut", () => {
+    // MAX_TOKENS is 400. Two ~387-token sentences (290 short words each) sit just
+    // under the cap individually but overflow it together, forcing a flush. The
+    // overlap carry-forward used to unshift the whole trailing sentence forward
+    // unconditionally on its first iteration, so the carried ~387 tokens plus the
+    // next sentence produced a final chunk near ~774 tokens. With the budget
+    // guard on the first iteration, an oversized trailing sentence is not carried.
+    // (Distinct capitalized openers so Intl.Segmenter sees two sentences.)
+    const s1 = `Alpha ${Array(289).fill("word").join(" ")}.`;
+    const s2 = `Beta ${Array(289).fill("word").join(" ")}.`;
+    const chunks = chunkText(`# Section\n${s1} ${s2}`, "Test");
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.tokenCount).toBeLessThanOrEqual(400);
+    }
+  });
+
   it("returns empty array for empty string", () => {
     expect(chunkText("", "Empty")).toHaveLength(0);
   });

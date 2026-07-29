@@ -322,6 +322,48 @@ describe("search", () => {
     expect(titles).toContain("Project Plan");
   });
 
+  it("skips a chunk whose stored embedding dimension differs from the query", async () => {
+    // A corrupted (or since-changed-model) row can carry an embedding of a
+    // different dimension than the query. cosineSimilarity throws on the length
+    // mismatch; the scan must skip that one row, not reject the whole search.
+    upsertChunks(db, [
+      {
+        id: "good",
+        documentId: "d1",
+        chunkIndex: 0,
+        heading: null,
+        text: "matching passage",
+        embedding: makeEmbedding([0.9, 0.1, 0.0]), // 3-dim, matches the query
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+      {
+        id: "mismatch",
+        documentId: "d2",
+        chunkIndex: 0,
+        heading: null,
+        text: "wrong-dimension passage",
+        embedding: makeEmbedding([0.1, 0.2, 0.3, 0.4]), // 4-dim, would throw
+        embeddingModel: "nomic-embed-text",
+        tokenCount: 3,
+        createdAt: "2024-01-01T00:00:00Z",
+      },
+    ]);
+
+    // Ollama config (no rerank), 3-dim query. "zzqqxx" matches no text, so FTS
+    // contributes nothing and the vector scan is the only path to a result.
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ embeddings: [[1, 0, 0]] }),
+    } as Response);
+
+    const { results } = await search(db, "zzqqxx", { provider: "ollama" });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].chunkId).toBe("good");
+  });
+
   it("survivors carry correct text after the id-refetch (guards the join)", async () => {
     // The scan now only carries {id, score}; full rows (text, heading) come back
     // afterward via getChunksByIds, keyed by id. `SELECT ... WHERE id IN (...)`

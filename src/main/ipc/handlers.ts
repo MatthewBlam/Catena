@@ -45,6 +45,7 @@ import {
   broadcastSourcesChanged,
   broadcastRecentsChanged,
   getActiveSyncProgress,
+  setClearingAllData,
 } from "./sync-handlers";
 import { syncScheduler } from "../sync/scheduler";
 import {
@@ -472,21 +473,31 @@ export function registerIpcHandlers(): void {
     // current one, and we would wipe the database out from under it. Stopping
     // the scheduler first closes that window: `tick` re-checks its abort signal
     // before each source, with no `await` between the check and registration.
-    syncScheduler.stop();
-    await cancelAllSyncs();
+    //
+    // The flag closes the *other* window: a renderer-dispatched `sync:start`
+    // landing during the awaited `cancelAllSyncs` would register a brand-new
+    // sync against the DB we are about to wipe. Blocked here, cleared in the
+    // `finally` once the scheduler is back up.
+    setClearingAllData(true);
+    try {
+      syncScheduler.stop();
+      await cancelAllSyncs();
 
-    const db = getDb();
-    clearAllData(db);
-    initTelemetry(db);
+      const db = getDb();
+      clearAllData(db);
+      initTelemetry(db);
 
-    // `clearAllData` just wiped the `auto_sync_*` settings; the stopped
-    // scheduler is still holding the old values in memory.
-    syncScheduler.start(db);
+      // `clearAllData` just wiped the `auto_sync_*` settings; the stopped
+      // scheduler is still holding the old values in memory.
+      syncScheduler.start(db);
 
-    // Every source is gone. Not in the plan's list, but the renderer's copy of
-    // `sources:list` is exactly as stale here as it is after a single removal.
-    broadcastSourcesChanged();
-    broadcastRecentsChanged();
+      // Every source is gone. Not in the plan's list, but the renderer's copy of
+      // `sources:list` is exactly as stale here as it is after a single removal.
+      broadcastSourcesChanged();
+      broadcastRecentsChanged();
+    } finally {
+      setClearingAllData(false);
+    }
   });
 
   ipcMain.handle("embedding:health", () => {

@@ -7,6 +7,27 @@ interface CommonsAPI {
   checkOllama(): Promise<{ available: boolean; models: string[] }>;
   getEmbeddingProvider(): Promise<string>;
   setEmbeddingProvider(provider: string): Promise<void>;
+  /** Detailed Ollama readiness for the setup UI (engine + installed models). */
+  getOllamaStatusDetail(): Promise<
+    import("../shared/types").OllamaStatusDetail
+  >;
+  /**
+   * Runs the managed local-provider bootstrap: ensure the engine (download +
+   * extract + serve if needed), pull the embedding model, persist the provider.
+   * Progress arrives via `onOllamaProgress`; resolves when `phase: "ready"` is
+   * reached, rejects on failure/cancel.
+   */
+  ollamaSetup(): Promise<void>;
+  /** Cancels an in-flight `ollamaSetup`/`pullOllamaChatModel`. */
+  cancelOllamaSetup(): Promise<void>;
+  /** Downloads the chat model grounded answers need (optional, on-demand). */
+  pullOllamaChatModel(): Promise<void>;
+  setOllamaModel(model: string): Promise<void>;
+  setOllamaChatModel(model: string): Promise<void>;
+  /** Streams managed-Ollama setup/pull progress to any interested window. */
+  onOllamaProgress(
+    callback: (progress: import("../shared/types").OllamaProgress) => void,
+  ): () => void;
   openExternal(url: string): Promise<void>;
   search(query: string): Promise<import("../shared/types").SearchResponse>;
   /**

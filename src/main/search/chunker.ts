@@ -264,8 +264,13 @@ function splitOversizedSection(
       let overlapCount = 0;
       for (let i = current.length - 1; i >= 0; i--) {
         const st = estimateTokens(current[i]);
-        if (overlapCount + st > overlapTarget && overlapSentences.length > 0)
-          break;
+        // The budget guard applies on the *first* iteration too (no
+        // `overlapSentences.length > 0` exception). A lone trailing sentence
+        // larger than the overlap budget used to be carried unconditionally, so
+        // the carried sentence plus the next one could push the following flush
+        // over MAX_TOKENS. If it doesn't fit the budget, carry nothing rather
+        // than carry too much — small sentences still pack in as before.
+        if (overlapCount + st > overlapTarget) break;
         overlapSentences.unshift(current[i]);
         overlapCount += st;
       }

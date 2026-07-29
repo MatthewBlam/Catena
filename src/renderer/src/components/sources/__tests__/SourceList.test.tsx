@@ -36,6 +36,7 @@ function makeSource(overrides: Partial<SourceWithCount> = {}): SourceWithCount {
 function makeProgress(overrides: Partial<SyncProgress> = {}): SyncProgress {
   return {
     sourceId: "s1",
+    startedAt: "2024-01-01T00:00:00Z",
     phase: "fetching",
     current: 0,
     skipped: 0,

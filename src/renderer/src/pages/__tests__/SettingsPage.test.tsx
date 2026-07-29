@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  act,
+  fireEvent,
+} from "@testing-library/react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { SettingsPage } from "../SettingsPage";
 import type { StorageStats } from "../../../../shared/types";
@@ -169,5 +175,66 @@ describe("SettingsPage — sync-state refetch debounce + visibility gate (F11)",
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("SettingsPage — analytics off confirmation", () => {
+  function renderVisible(): void {
+    render(
+      <SettingsPage
+        visible={true}
+        dark={false}
+        onToggleTheme={vi.fn()}
+        onProviderReset={vi.fn()}
+      />,
+    );
+  }
+
+  it("turning analytics off asks first and only persists on confirm", async () => {
+    mockApi();
+    const setTelemetry = vi.fn(() => Promise.resolve());
+    window.api.setTelemetryEnabled = setTelemetry;
+    renderVisible();
+    await act(async () => {});
+
+    const toggle = screen.getByRole("switch", {
+      name: "Anonymous usage analytics",
+    });
+    fireEvent.click(toggle);
+
+    // The confirmation modal appears and nothing is persisted yet.
+    expect(
+      screen.getByText("Turn off anonymous analytics?"),
+    ).toBeInTheDocument();
+    expect(setTelemetry).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Turn it off" }));
+    await act(async () => {});
+
+    expect(setTelemetry).toHaveBeenCalledWith(false);
+  });
+
+  it("keeping analytics on persists nothing and leaves the toggle on", async () => {
+    mockApi();
+    const setTelemetry = vi.fn(() => Promise.resolve());
+    window.api.setTelemetryEnabled = setTelemetry;
+    renderVisible();
+    await act(async () => {});
+
+    const toggle = screen.getByRole("switch", {
+      name: "Anonymous usage analytics",
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(
+      screen.getByText("Turn off anonymous analytics?"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep it on" }));
+    await act(async () => {});
+
+    expect(setTelemetry).not.toHaveBeenCalled();
+    // The switch never moved — the disable was never applied.
+    expect(toggle).toBeChecked();
   });
 });

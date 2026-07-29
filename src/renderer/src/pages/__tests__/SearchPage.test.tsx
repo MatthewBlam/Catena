@@ -315,6 +315,46 @@ describe("SearchPage — provider readiness", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("ignores a stale out-of-order listSources response instead of latching sourceCount back", async () => {
+    // Provider fully ready, so `searchUnavailable` is gated purely on
+    // sourceCount. Two overlapping listSources calls resolve out of order: the
+    // OLDER call resolves last, to 0 sources; the NEWER call resolves first, to
+    // 1. Without the sequence guard the stale 0 clobbers the newer 1 and wrongly
+    // disables search / shows "No sources connected".
+    mockApi({ hasCohereKey: true });
+    const older = deferred<unknown[]>();
+    const newer = deferred<unknown[]>();
+    const queued = [older.promise, newer.promise];
+    let call = 0;
+    window.api.listSources = vi.fn(
+      () => queued[call++] ?? Promise.resolve([]),
+    ) as unknown as typeof window.api.listSources;
+
+    // Mount fires refreshSources (call #1 → older); a visibility flip fires it
+    // again (call #2 → newer).
+    const { rerender } = render(<SearchPage visible={true} />);
+    rerender(<SearchPage visible={false} />);
+    rerender(<SearchPage visible={true} />);
+
+    const input = await screen.findByLabelText("Search your documents");
+
+    // Newer resolves first → sourceCount = 1 → enabled.
+    await act(async () => {
+      newer.resolve([{}]);
+    });
+    await waitFor(() => expect(input).not.toBeDisabled());
+
+    // Older resolves last, to 0 — must be dropped, not applied.
+    await act(async () => {
+      older.resolve([]);
+    });
+
+    expect(input).not.toBeDisabled();
+    expect(
+      screen.queryByText("No sources connected yet."),
+    ).not.toBeInTheDocument();
+  });
+
   it("blocks a suggested-question click while not ready, even though the input's disabled attribute does not cover it", async () => {
     // sourceCount: 1 forces the `EmptyState` branch (sourceCount === 0 shows
     // "no sources connected" text instead) — EmptyState's suggested-question

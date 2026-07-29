@@ -16,6 +16,7 @@ import { Spinner } from "@renderer/components/ui/spinner";
 import { VirtualList } from "@renderer/components/ui/VirtualList";
 import type { SourceWithCount, Document } from "../../../../shared/types";
 import { providerLabel } from "@renderer/lib/format";
+import { openExternal } from "@renderer/lib/openExternal";
 import { cn, debounce } from "@renderer/lib/utils";
 
 interface SourceListProps {
@@ -643,7 +644,7 @@ export function SourceList({
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          onClick={() => void window.api.openExternal(doc.url!)}
+                          onClick={() => void openExternal(doc.url!)}
                           title="Open source"
                         >
                           <ExternalLinkIcon />

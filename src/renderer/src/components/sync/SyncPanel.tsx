@@ -56,6 +56,11 @@ export function SyncPanel({
   >("syncing");
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  // The sync's true start (epoch ms), learned from `SyncProgress.startedAt`.
+  // Null until the first progress event (or the observe-only mount fetch
+  // below) supplies it; the elapsed timer falls back to first-tick time until
+  // then — accurate for an autoStart panel (it starts the sync at mount).
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const startedRef = useRef(false);
   // Mirrors `status` so the async sync callbacks can read the *current* value
   // without a stale closure. The only thing that moves status off "syncing"
@@ -70,6 +75,17 @@ export function SyncPanel({
   // render), which would otherwise re-invoke it on every unrelated re-render
   // while a terminal panel sits on screen waiting to be dismissed.
   const settledRef = useRef(false);
+  // The parent passes fresh inline `onComplete`/`onSettled` closures on every
+  // render, so the settle/dismiss effect below must NOT depend on their
+  // identities — a sibling sync's progress re-render would otherwise re-run it
+  // and re-arm the 1.5s dismiss timer, which then never fires. Keep the latest
+  // closures in refs and fire through them, depending only on `status`.
+  const onCompleteRef = useRef(onComplete);
+  const onSettledRef = useRef(onSettled);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+    onSettledRef.current = onSettled;
+  });
 
   // M16: the sync is started exactly once (guarded), but the progress
   // subscription lives in its own *unguarded* effect. Folding both into one
@@ -80,10 +96,36 @@ export function SyncPanel({
     const unsub = window.api.onSyncProgress((p) => {
       if (p.sourceId === sourceId) {
         setProgress(p);
+        // Learn the true start once. It is identical across every event of a
+        // sync, so keep the first non-null value we see and ignore the rest.
+        const ms = Date.parse(p.startedAt);
+        if (!Number.isNaN(ms)) setStartedAtMs((prev) => prev ?? ms);
       }
     });
     return unsub;
   }, [sourceId]);
+
+  // Observe-only panels mount onto a sync already running in main, and may not
+  // see a progress event for a moment (main could be mid-embedding on a large
+  // document). Fetch the active-sync snapshot once so the elapsed timer shows
+  // the true elapsed from mount instead of counting up from zero until then.
+  useEffect(() => {
+    if (autoStart) return;
+    let cancelled = false;
+    window.api
+      .getActiveSyncs()
+      .then(({ active }) => {
+        if (cancelled) return;
+        const mine = active.find((a) => a.sourceId === sourceId);
+        if (!mine) return;
+        const ms = Date.parse(mine.startedAt);
+        if (!Number.isNaN(ms)) setStartedAtMs((prev) => prev ?? ms);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [autoStart, sourceId]);
 
   useEffect(() => {
     // Observe-only: the sync already runs in main; do not start it again.
@@ -109,9 +151,21 @@ export function SyncPanel({
 
   useEffect(() => {
     if (status !== "syncing") return;
-    const interval = setInterval(() => setElapsed((e) => e + 1), 1000);
+    // Derive elapsed from a fixed base timestamp rather than incrementing a
+    // counter: the base is the sync's true start (`startedAtMs`) once known, so
+    // an observe-only panel that mounted mid-sync shows the real elapsed time,
+    // not seconds-since-mount. It also self-corrects across sleep/throttling,
+    // where an incrementing tick would drift. Recompute immediately so a switch
+    // to the true base (once it arrives) is reflected without a 1s lag. Until
+    // `startedAtMs` arrives the base is this effect's first run (~mount, since
+    // deps are stable while syncing) — right for an autoStart panel.
+    const base = startedAtMs ?? Date.now();
+    const tick = (): void =>
+      setElapsed(Math.max(0, Math.floor((Date.now() - base) / 1000)));
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [status]);
+  }, [status, startedAtMs]);
 
   useEffect(() => {
     // F1/F9: any terminal status frees the queue slot via onSettled, exactly
@@ -120,14 +174,15 @@ export function SyncPanel({
     if (status === "syncing") return;
     if (!settledRef.current) {
       settledRef.current = true;
-      onSettled?.();
+      onSettledRef.current?.();
     }
     // H3: only a clean completion self-dismisses on a timer. An "error" or
     // "canceled" panel stays put — with a Dismiss button — until the user acts.
     if (status !== "complete") return;
-    const timer = setTimeout(onComplete, 1500);
+    const timer = setTimeout(() => onCompleteRef.current(), 1500);
     return () => clearTimeout(timer);
-  }, [status, onSettled, onComplete]);
+    // Depends ONLY on the status transition — see the onCompleteRef note above.
+  }, [status]);
 
   function handleCancel(): void {
     window.api.cancelSync(sourceId).catch(() => {});

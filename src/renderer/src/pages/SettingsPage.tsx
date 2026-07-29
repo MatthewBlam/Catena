@@ -4,8 +4,10 @@ import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import { Switch } from "@renderer/components/ui/switch";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { ConfirmDialog } from "@renderer/components/ui/confirm-dialog";
 import { debounce } from "@renderer/lib/utils";
 import { formatRelativeTime } from "@renderer/lib/format";
+import { openExternal } from "@renderer/lib/openExternal";
 import type { StorageStats } from "../../../shared/types";
 
 interface SettingsPageProps {
@@ -45,6 +47,7 @@ export function SettingsPage({
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
+  const [showTelemetryConfirm, setShowTelemetryConfirm] = useState(false);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevVisibleRef = useRef(false);
   // Separate from `prevVisibleRef` above: that ref is updated inside the
@@ -236,7 +239,7 @@ export function SettingsPage({
     }
   }
 
-  async function handleToggleTelemetry(next: boolean): Promise<void> {
+  async function applyTelemetry(next: boolean): Promise<void> {
     // Optimistic, then reconciled: a switch that does not move under the cursor
     // feels broken. If the write fails we put it back rather than leave the UI
     // claiming a setting that was never saved.
@@ -247,6 +250,18 @@ export function SettingsPage({
       setTelemetryEnabled(!next);
       setLoadError("Failed to update analytics setting.");
     }
+  }
+
+  function handleToggleTelemetry(next: boolean): void {
+    // Turning analytics OFF opens a confirmation first — it is the one privacy
+    // control whose value to the project the user cannot see, so it is worth a
+    // moment's explanation. The switch stays visually on (we don't touch state)
+    // until the choice is confirmed. Turning it back on is frictionless.
+    if (!next) {
+      setShowTelemetryConfirm(true);
+      return;
+    }
+    void applyTelemetry(true);
   }
 
   async function handleDisconnectNotion(): Promise<void> {
@@ -533,6 +548,32 @@ export function SettingsPage({
             />
           </div>
 
+          <ConfirmDialog
+            open={showTelemetryConfirm}
+            onOpenChange={setShowTelemetryConfirm}
+            title="Turn off anonymous analytics?"
+            confirmLabel="Turn it off"
+            cancelLabel="Keep it on"
+            confirmVariant="outline"
+            cancelVariant="default"
+            onConfirm={() => void applyTelemetry(false)}
+          >
+            <p>
+              Commons is built by one developer. These anonymous counts are how
+              I see what people actually use, catch crashes, and decide what to
+              fix next — without them I&apos;m working blind.
+            </p>
+            <p>
+              It stays completely anonymous: just tallies like how many searches
+              were run or sources added, tied to a random device ID.{" "}
+              <span className="font-medium text-foreground">
+                Your queries, your documents, and their titles are never sent or
+                tracked
+              </span>{" "}
+              — that never changes whether this is on or off.
+            </p>
+          </ConfirmDialog>
+
           {/*
             Commons is local-first, not local-only, and the difference is not
             self-evident from the marketing. Someone deciding whether to point
@@ -584,7 +625,7 @@ export function SettingsPage({
               size="xs"
               className="px-0"
               onClick={() => {
-                void window.api.openExternal(
+                void openExternal(
                   "https://github.com/MatthewBlam/commons-app/blob/main/PRIVACY.md",
                 );
               }}

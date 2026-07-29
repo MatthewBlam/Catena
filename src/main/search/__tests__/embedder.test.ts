@@ -387,4 +387,37 @@ describe("abort handling", () => {
       expect(dense.every((e) => e instanceof Float32Array)).toBe(true);
     }
   });
+
+  it("rejects without an unhandledRejection when several batches fail at once", async () => {
+    // 384 texts = 4 Cohere batches at a concurrency of 3, so three batches are
+    // in flight together. When two of them reject, `Promise.race(active)` throws
+    // on the first and unwinds before `Promise.all(active)` can await the rest —
+    // and an un-awaited rejection in the main process is an unhandledRejection, a
+    // process-level event no try/catch around embedDocuments can see.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      // 401 is non-retryable, so every batch rejects promptly (no backoff waits)
+      // and all three in-flight batches fail together.
+      vi.mocked(fetch).mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+      } as Response);
+
+      await expect(
+        embedDocuments(Array(384).fill("text"), cohereConfig),
+      ).rejects.toThrow();
+
+      // Let the microtask queue drain — unhandledRejection fires a tick later.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });

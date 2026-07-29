@@ -46,7 +46,10 @@ import { createTestDb } from "../../db/__tests__/test-db";
 import { insertSource, upsertSetting, deleteSource } from "../../db/database";
 import { activeSyncs } from "../../ipc/sync-handlers";
 
-const INTERVAL_MS = 1000;
+// A real, in-range interval: `start()` now clamps the loaded value to >=60s the
+// same way `setIntervalMs` does, so a sub-minute test interval would be raised
+// and never fire on `advanceTimersByTimeAsync`. Fake timers make 60s instant.
+const INTERVAL_MS = 60_000;
 
 /** Lets pending microtasks run while fake timers are installed. */
 const settle = async (): Promise<void> => {
@@ -66,8 +69,15 @@ function seed(db: Database.Database, ids: string[]): void {
     });
   });
   upsertSetting(db, "auto_sync_enabled", "true");
-  // `start()` reads the raw setting; only `setIntervalMs` clamps to 60s.
   upsertSetting(db, "auto_sync_interval_ms", String(INTERVAL_MS));
+  // Mark a just-completed sync so `start()` does NOT schedule an overdue
+  // startup catch-up on top of the interval tick these tests exercise. The
+  // catch-up has its own dedicated tests below.
+  upsertSetting(
+    db,
+    "auto_sync_last_synced_at",
+    new Date(Date.now()).toISOString(),
+  );
 }
 
 describe("SyncScheduler state (M6)", () => {
@@ -220,6 +230,30 @@ describe("SyncScheduler state (M6)", () => {
     expect(h.syncCalls).toEqual(["s1"]);
   });
 
+  it("setEnabled(false) aborts an in-progress tick, not just the interval", async () => {
+    seed(db, ["s1", "s2"]);
+    syncScheduler.start(db);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS);
+    await settle();
+    expect(h.syncCalls).toEqual(["s1"]); // parked on s1
+    expect(activeSyncs.get("s1")?.controller.signal.aborted).toBe(false);
+
+    // Disabling auto-sync must stop the billable work already in flight, not
+    // just cancel future ticks. The per-source controller is aborted via the
+    // tick's abort listener, exactly as `stop()` would.
+    await syncScheduler.setEnabled(false);
+
+    expect(activeSyncs.get("s1")?.controller.signal.aborted).toBe(true);
+    expect(syncScheduler.getState().syncing).toBe(false);
+
+    releaseAll();
+    await settle();
+
+    // s2 is never reached: the tick was aborted, not merely descheduled.
+    expect(h.syncCalls).toEqual(["s1"]);
+  });
+
   it("skips a source deleted after the tick's snapshot was taken (item 3)", async () => {
     // s1's sync hangs, giving the test a window to delete s2 out from under
     // the tick's `getAllSources` snapshot before the loop ever reaches it.
@@ -241,5 +275,34 @@ describe("SyncScheduler state (M6)", () => {
     // source that no longer exists.
     expect(h.syncCalls).toEqual(["s1"]);
     expect(h.connectorCalls).toHaveLength(connectorCallsBeforeDeletion);
+  });
+
+  it("runs an overdue catch-up sync shortly after start, without waiting a full interval", async () => {
+    seed(db, ["s1"]);
+    // The last sync was longer ago than an interval, so a catch-up is due.
+    upsertSetting(
+      db,
+      "auto_sync_last_synced_at",
+      new Date(Date.now() - 2 * INTERVAL_MS).toISOString(),
+    );
+    syncScheduler.start(db);
+
+    // Advance only the short startup delay — far less than a full interval.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+
+    // The catch-up tick ran even though the 60s interval has not fired yet.
+    expect(h.syncCalls).toEqual(["s1"]);
+  });
+
+  it("does not run a catch-up when the last sync is recent", async () => {
+    seed(db, ["s1"]); // seed marks a just-completed sync
+    syncScheduler.start(db);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+
+    // Not overdue: nothing runs until the full interval elapses.
+    expect(h.syncCalls).toEqual([]);
   });
 });

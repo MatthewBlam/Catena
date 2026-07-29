@@ -16,6 +16,32 @@ const api = {
     ipcRenderer.invoke("settings:get-embedding-provider"),
   setEmbeddingProvider: (provider: string): Promise<void> =>
     ipcRenderer.invoke("settings:set-embedding-provider", provider),
+  getOllamaStatusDetail: (): Promise<
+    import("../shared/types").OllamaStatusDetail
+  > => ipcRenderer.invoke("ollama:status"),
+  ollamaSetup: (): Promise<void> => ipcRenderer.invoke("ollama:setup"),
+  cancelOllamaSetup: (): Promise<void> =>
+    ipcRenderer.invoke("ollama:cancel-setup"),
+  pullOllamaChatModel: (): Promise<void> =>
+    ipcRenderer.invoke("ollama:pull-chat-model"),
+  setOllamaModel: (model: string): Promise<void> =>
+    ipcRenderer.invoke("settings:set-ollama-model", model),
+  setOllamaChatModel: (model: string): Promise<void> =>
+    ipcRenderer.invoke("settings:set-ollama-chat-model", model),
+  onOllamaProgress: (
+    callback: (progress: import("../shared/types").OllamaProgress) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      progress: import("../shared/types").OllamaProgress,
+    ): void => {
+      callback(progress);
+    };
+    ipcRenderer.on("ollama:progress", handler);
+    return () => {
+      ipcRenderer.removeListener("ollama:progress", handler);
+    };
+  },
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke("app:open-external", url),
   search: (query: string): Promise<import("../shared/types").SearchResponse> =>

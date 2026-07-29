@@ -1,154 +1,111 @@
-import { useEffect, useRef, useState } from "react";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
-import { getOllamaStatus, isEmbeddingModel } from "@renderer/lib/ollama";
-
-const PULL_COMMAND = "ollama pull nomic-embed-text";
+import { Spinner } from "@renderer/components/ui/spinner";
+import { OllamaProgressBar } from "@renderer/components/setup/OllamaProgressBar";
+import { useOllamaSetup } from "@renderer/lib/useOllamaSetup";
+import type { OllamaStatusDetail } from "../../../../shared/types";
 
 interface OllamaOptionProps {
   onSuccess: () => void;
 }
 
+/**
+ * Local-provider onboarding. Replaces the old copy-a-terminal-command flow with
+ * a one-click managed setup: the main process downloads + starts Ollama (or
+ * reuses a running one) and pulls the embedding model, streaming progress here.
+ * If everything is already installed, it goes straight to "Use Ollama".
+ */
 export function OllamaOption({
   onSuccess,
 }: OllamaOptionProps): React.JSX.Element {
-  const [status, setStatus] = useState<
-    "checking" | "available" | "unavailable"
-  >("checking");
-  const [models, setModels] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    return () => window.clearTimeout(copiedTimerRef.current);
-  }, []);
-
-  async function handleCopy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(PULL_COMMAND);
-      setCopied(true);
-      window.clearTimeout(copiedTimerRef.current);
-      copiedTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable — the snippet text is still selectable by hand.
-    }
-  }
-
-  async function checkOllama(): Promise<void> {
-    setStatus("checking");
-    setError(null);
-    try {
-      const result = await getOllamaStatus();
-      if (result.available) {
-        setStatus("available");
-        setModels(result.models);
-      } else {
-        setStatus("unavailable");
-      }
-    } catch {
-      setError("Failed to check Ollama status.");
-    }
-  }
+  const [status, setStatus] = useState<OllamaStatusDetail | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const { progress, running, error, start, cancel } = useOllamaSetup();
 
   useEffect(() => {
     let ignore = false;
-    (async () => {
-      try {
-        const result = await getOllamaStatus();
-        if (ignore) return;
-        if (result.available) {
-          setStatus("available");
-          setModels(result.models);
-        } else {
-          setStatus("unavailable");
-        }
-      } catch {
-        if (ignore) return;
-        setError("Failed to check Ollama status.");
-      }
-    })();
+    window.api
+      .getOllamaStatusDetail()
+      .then((s) => {
+        if (!ignore) setStatus(s);
+      })
+      .catch(() => {
+        if (!ignore) setStatusError("Failed to check Ollama status.");
+      });
     return () => {
       ignore = true;
     };
   }, []);
 
-  async function handleSelect(): Promise<void> {
+  async function handleUseExisting(): Promise<void> {
     try {
       await window.api.setEmbeddingProvider("ollama");
       onSuccess();
     } catch {
-      setError("Failed to set Ollama as provider.");
+      setStatusError("Failed to set Ollama as provider.");
     }
   }
 
-  if (error) {
-    return <ErrorBanner variant="error">{error}</ErrorBanner>;
-  }
-
-  if (status === "checking") {
-    return (
-      <p className="text-sm text-muted-foreground">Checking for Ollama…</p>
+  function runSetup(): void {
+    // On a clean finish, persist provider + advance. Refresh status too, so a
+    // failure mid-way leaves the button in the right state.
+    start(
+      () => window.api.ollamaSetup(),
+      () => onSuccess(),
     );
   }
 
-  if (status === "unavailable") {
+  if (statusError) {
+    return <ErrorBanner variant="error">{statusError}</ErrorBanner>;
+  }
+
+  if (running && progress) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Ollama is not running. Install it from{" "}
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:text-foreground"
-            onClick={() => void window.api.openExternal("https://ollama.com")}
-          >
-            ollama.com
-          </button>
-          , then start it and try again.
-        </p>
-        <Button variant="outline" onClick={checkOllama} className="w-full">
-          Retry
+        <OllamaProgressBar progress={progress} />
+        <Button variant="outline" onClick={cancel} className="w-full">
+          Cancel
         </Button>
       </div>
     );
   }
 
-  const embeddingModels = models.filter(isEmbeddingModel);
+  if (status === null) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner className="size-3.5" />
+        Checking for Ollama…
+      </p>
+    );
+  }
+
+  // Everything's already in place (a prior setup, or a system Ollama with an
+  // embedding model) — no download needed.
+  if (status.engineUp && status.embeddingReady) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-success-foreground">
+          Ollama is ready ({status.embeddingModels.join(", ")}).
+        </p>
+        <Button onClick={() => void handleUseExisting()} className="w-full">
+          Use Ollama
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-success-foreground">Ollama is running.</p>
-      {embeddingModels.length > 0 ? (
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            Found embedding models: {embeddingModels.join(", ")}
-          </p>
-          <Button onClick={handleSelect} className="w-full">
-            Use Ollama
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            No embedding models found. Pull one first:
-          </p>
-          <div className="flex items-center justify-between gap-2 rounded-sm bg-muted py-1 pl-2 pr-1">
-            <code className="text-sm font-mono">{PULL_COMMAND}</code>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={copied ? "Copied" : "Copy command"}
-              onClick={() => void handleCopy()}
-            >
-              {copied ? <CheckIcon /> : <CopyIcon />}
-            </Button>
-          </div>
-          <Button variant="outline" onClick={checkOllama} className="w-full">
-            Retry
-          </Button>
-        </div>
-      )}
+      {error && <ErrorBanner variant="error">{error}</ErrorBanner>}
+      <p className="text-sm text-muted-foreground">
+        Commons will download and run Ollama locally, then fetch the embedding
+        model it needs — no manual setup or account required. This can take a
+        few minutes and around 300&nbsp;MB.
+      </p>
+      <Button onClick={runSetup} className="w-full">
+        Set up Ollama
+      </Button>
     </div>
   );
 }

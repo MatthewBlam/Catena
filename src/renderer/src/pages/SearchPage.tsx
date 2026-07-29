@@ -74,6 +74,8 @@ export function SearchPage({
   const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
   const readinessIdRef = useRef(0);
+  const healthIdRef = useRef(0);
+  const sourcesIdRef = useRef(0);
   // Monotonic token, mirroring requestIdRef for search: a new generation, a new
   // search, or a restore bumps it, so streamed deltas and the awaited result of a
   // superseded generation are dropped.
@@ -90,16 +92,31 @@ export function SearchPage({
   }, [query]);
 
   const refreshHealth = useCallback(() => {
+    // Same stale-response guard as refreshReadiness/handleSearch: two in-flight
+    // refreshes (a burst of sources:changed, a visibility flip) can resolve out
+    // of order, so a slower earlier call must not clobber a newer result.
+    const id = ++healthIdRef.current;
     window.api
       .checkEmbeddingHealth()
-      .then(setHealth)
+      .then((h) => {
+        if (id !== healthIdRef.current) return;
+        setHealth(h);
+      })
       .catch(() => {});
   }, []);
 
   const refreshSources = useCallback(() => {
+    // Guarded like refreshReadiness/handleSearch: without this, an earlier
+    // listSources resolving after a newer one latches sourceCount back to a
+    // stale value (e.g. 0), which wrongly gates searchUnavailable and shows
+    // "No sources connected".
+    const id = ++sourcesIdRef.current;
     window.api
       .listSources()
-      .then((sources) => setSourceCount(sources.length))
+      .then((sources) => {
+        if (id !== sourcesIdRef.current) return;
+        setSourceCount(sources.length);
+      })
       .catch(() => {});
   }, []);
 

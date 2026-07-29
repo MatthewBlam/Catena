@@ -24,9 +24,39 @@ export interface ActiveSync {
    * whether the sync has stopped touching the database. This does.
    */
   done: Promise<void>;
+  /**
+   * ISO timestamp captured when the sync was registered — the authoritative
+   * start time. Stamped onto every `SyncProgress` for this sync (so the panel
+   * elapsed timer counts from the true start) and onto the pre-first-event
+   * snapshot `getActiveSyncProgress` synthesizes.
+   */
+  startedAt: string;
 }
 
 export const activeSyncs = new Map<string, ActiveSync>();
+
+/**
+ * Set while `app:clear-all-data` is tearing down and wiping the database. A
+ * `sync:start` dispatched during that window would register against a DB that is
+ * about to be (or has just been) wiped, hitting foreign-key violations and
+ * leaving an orphan `activeSyncs` entry. Lives here — the module that registers
+ * syncs — so the `sync:start` handler can check it before `registerSync`.
+ */
+let clearingAllData = false;
+
+export function setClearingAllData(value: boolean): void {
+  clearingAllData = value;
+}
+
+/**
+ * Abort reason the scheduler uses when it stops a background tick because
+ * auto-sync was turned OFF — as opposed to a user cancelling a specific source,
+ * or the app quitting. `recordSyncOutcome` treats it specially: an interrupted
+ * background sync leaves the source's prior status untouched instead of stamping
+ * it "cancelled", which would misattribute a cancellation to a source the user
+ * never touched.
+ */
+export const AUTO_SYNC_DISABLED = Symbol("auto-sync-disabled");
 
 /**
  * How long a caller will wait for an aborted sync to unwind before giving up on
@@ -71,12 +101,19 @@ async function withTimeout(
 export function registerSync(sourceId: string): {
   controller: AbortController;
   finish: () => void;
+  startedAt: string;
 } {
   const controller = new AbortController();
   const deferred = createDeferred();
-  activeSyncs.set(sourceId, { controller, done: deferred.promise });
+  const startedAt = new Date().toISOString();
+  activeSyncs.set(sourceId, {
+    controller,
+    done: deferred.promise,
+    startedAt,
+  });
   return {
     controller,
+    startedAt,
     finish: () => {
       activeSyncs.delete(sourceId);
       // The end of the sync is what clears the progress entry — not a terminal
@@ -171,14 +208,17 @@ export function broadcastRecentsChanged(): void {
 
 /** Progress for every sync running right now, for a renderer that just mounted. */
 export function getActiveSyncProgress(): SyncProgress[] {
-  return [...activeSyncs.keys()].map(
-    (sourceId) =>
+  return [...activeSyncs.entries()].map(
+    ([sourceId, entry]) =>
       // A sync that is registered but still inside `getConnectorForSource` — a
       // Google token refresh is a network round-trip — has not emitted anything
       // yet. Reporting nothing for it would let the renderer offer a "Sync"
-      // button that can only fail with "sync already in progress".
+      // button that can only fail with "sync already in progress". The
+      // synthesized snapshot carries the entry's `startedAt` so a mounting
+      // panel counts elapsed from the true start even before the first event.
       lastProgressBySource.get(sourceId) ?? {
         sourceId,
+        startedAt: entry.startedAt,
         phase: "fetching",
         current: 0,
         skipped: 0,
@@ -214,7 +254,14 @@ export function recordSyncOutcome(
   sourceId: string,
   outcome: SyncOutcomeInput,
   aborted: boolean,
+  abortReason?: unknown,
 ): void {
+  // A background tick aborted because auto-sync was turned off is not a
+  // per-source cancellation. Leave the source's prior status as-is rather than
+  // stamping "cancelled" on a source the user never acted on. (A user's own
+  // Cancel, and app quit, still fall through to the "cancelled" path below.)
+  if (aborted && abortReason === AUTO_SYNC_DISABLED) return;
+
   const thrownMessage =
     outcome.thrown === undefined
       ? null
@@ -333,6 +380,7 @@ export async function runManagedSync(
   embedConfig: EmbedConfig,
   controller: AbortController,
   finish: () => void,
+  startedAt: string,
   { trigger, onError }: RunManagedSyncOptions,
 ): Promise<boolean> {
   const startMs = Date.now();
@@ -360,6 +408,7 @@ export async function runManagedSync(
         publishSyncProgress(progress);
       },
       controller.signal,
+      startedAt,
     );
   } catch (err) {
     syncState.thrown = err;
@@ -370,7 +419,13 @@ export async function runManagedSync(
     // seconds. And the outcome has to be written before `finish`, or
     // `sources:remove` could delete the row between the two.
     try {
-      recordSyncOutcome(db, source.id, syncState, controller.signal.aborted);
+      recordSyncOutcome(
+        db,
+        source.id,
+        syncState,
+        controller.signal.aborted,
+        controller.signal.reason,
+      );
       track("commons_sync_completed", {
         source_provider: source.provider,
         trigger,
@@ -400,6 +455,11 @@ export async function runManagedSync(
 
 export function registerSyncHandlers(): void {
   ipcMain.handle("sync:start", async (_event, sourceId: string) => {
+    // A clear-all-data in progress is about to wipe the database. Registering a
+    // sync now would run it against the wiped DB — FK violations and an orphan
+    // `activeSyncs` entry. Ignore the request cleanly rather than throwing.
+    if (clearingAllData) return;
+
     const db = getDb();
     const source = getSourceById(db, sourceId);
     if (!source) throw new Error(`Source not found: ${sourceId}`);
@@ -413,14 +473,22 @@ export function registerSyncHandlers(): void {
     // `registerSync` ran first, that throw would leave the source wedged in
     // `activeSyncs` forever — `finish()` is only reachable after this point.
     const embedConfig = buildEmbedConfig(db);
-    const { controller, finish } = registerSync(sourceId);
+    const { controller, finish, startedAt } = registerSync(sourceId);
 
-    await runManagedSync(db, source, embedConfig, controller, finish, {
-      trigger: "manual",
-      onError: (err) => {
-        throw err;
+    await runManagedSync(
+      db,
+      source,
+      embedConfig,
+      controller,
+      finish,
+      startedAt,
+      {
+        trigger: "manual",
+        onError: (err) => {
+          throw err;
+        },
       },
-    });
+    );
   });
 
   ipcMain.handle("sync:cancel", async (_, sourceId: string) => {
