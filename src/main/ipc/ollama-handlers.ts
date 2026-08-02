@@ -4,6 +4,7 @@ import { getDb } from "../db/singleton";
 import { upsertSetting } from "../db/database";
 import { track } from "../telemetry/posthog";
 import { runSetup, pullChatModel, getStatusDetail } from "../ollama/setup";
+import { uninstallOllama } from "../ollama/uninstall";
 
 /**
  * The in-flight managed operation (initial setup OR the optional chat pull).
@@ -76,6 +77,25 @@ export function registerOllamaHandlers(): void {
 
   ipcMain.handle("ollama:cancel-setup", () => {
     activeOp?.abort();
+  });
+
+  // Complete teardown of the managed engine + Commons-pulled models. Shares the
+  // single-flight guard so it can't race an in-flight download/pull.
+  ipcMain.handle("ollama:uninstall", async () => {
+    if (activeOp) {
+      throw new Error("An Ollama operation is already in progress.");
+    }
+    const controller = new AbortController();
+    activeOp = controller;
+    track("commons_ollama_uninstall_started", { platform: process.platform });
+    try {
+      await uninstallOllama(controller.signal);
+      track("commons_ollama_uninstall_completed", {
+        platform: process.platform,
+      });
+    } finally {
+      if (activeOp === controller) activeOp = null;
+    }
   });
 
   ipcMain.handle("ollama:status", () => getStatusDetail(activeOp !== null));

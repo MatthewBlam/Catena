@@ -28,6 +28,7 @@ const api = {
     ipcRenderer.invoke("settings:set-ollama-model", model),
   setOllamaChatModel: (model: string): Promise<void> =>
     ipcRenderer.invoke("settings:set-ollama-chat-model", model),
+  uninstallOllama: (): Promise<void> => ipcRenderer.invoke("ollama:uninstall"),
   onOllamaProgress: (
     callback: (progress: import("../shared/types").OllamaProgress) => void,
   ): (() => void) => {

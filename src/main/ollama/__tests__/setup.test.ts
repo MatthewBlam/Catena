@@ -7,6 +7,7 @@ vi.mock("../runtime", () => ({
     onP({ phase: "checking" });
   }),
   isEngineUp: vi.fn(async () => true),
+  managedBinaryExists: vi.fn(() => false),
 }));
 
 vi.mock("../models", () => ({

@@ -9,8 +9,24 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { SyncPanel } from "../SyncPanel";
+import type { SyncProgress } from "../../../../../shared/types";
 
 afterEach(cleanup);
+
+function makeProgress(overrides: Partial<SyncProgress> = {}): SyncProgress {
+  return {
+    sourceId: "s1",
+    startedAt: "2024-01-01T00:00:00Z",
+    phase: "done",
+    current: 0,
+    skipped: 0,
+    total: 0,
+    deleted: 0,
+    currentDocTitle: null,
+    errors: [],
+    ...overrides,
+  };
+}
 
 function mockApi(overrides: {
   syncSource?: () => Promise<void>;
@@ -230,5 +246,71 @@ describe("SyncPanel", () => {
     expect(screen.getByText("Dismissing…")).toBeInTheDocument();
     expect(screen.queryByText("Done")).not.toBeInTheDocument();
     expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the panel open (no auto-dismiss) when the sync completed with per-document errors", async () => {
+    vi.useFakeTimers();
+    try {
+      let fire!: (p: SyncProgress) => void;
+      window.api = {
+        onSyncProgress: vi.fn((cb: (p: SyncProgress) => void) => {
+          fire = cb;
+          return () => {};
+        }),
+        syncSource: vi.fn(() => Promise.resolve()),
+        cancelSync: vi.fn(() => Promise.resolve()),
+        getActiveSyncs: vi.fn(() => Promise.resolve({ active: [] })),
+      } as unknown as typeof window.api;
+
+      const onComplete = vi.fn();
+      const onSettled = vi.fn();
+      render(
+        <SyncPanel
+          sourceId="s1"
+          sourceName="My Source"
+          onComplete={onComplete}
+          onSettled={onSettled}
+        />,
+      );
+
+      // The final progress event carries a per-document error; then the sync
+      // itself resolves (a partial success — not a thrown failure).
+      act(() => {
+        fire(
+          makeProgress({
+            phase: "done",
+            errors: ["Doc X failed: rate limited"],
+          }),
+        );
+      });
+      await act(async () => {});
+
+      // Labeled as a completion-with-errors, the error is shown, and a Dismiss
+      // button is offered — it does NOT claim to be auto-dismissing.
+      expect(
+        screen.getByText("Sync completed with errors"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Doc X failed: rate limited"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Dismiss" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Dismissing…")).not.toBeInTheDocument();
+      // Settled once (frees the queue slot) but not dismissed.
+      expect(onSettled).toHaveBeenCalledTimes(1);
+
+      // The 1.5s auto-dismiss window passes without dismissing.
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(onComplete).not.toHaveBeenCalled();
+
+      // The user can still dismiss manually.
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(onComplete).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

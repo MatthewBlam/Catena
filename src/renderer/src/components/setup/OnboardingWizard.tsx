@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@renderer/components/ui/button";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
+import { CohereIcon, OllamaIcon } from "@renderer/components/brand-icons";
 import { ApiKeyForm } from "@renderer/components/setup/ApiKeyForm";
 import { OllamaOption } from "@renderer/components/setup/OllamaOption";
 import { ConnectNotionButton } from "@renderer/components/sources/ConnectNotionButton";
@@ -102,13 +103,14 @@ export function OnboardingWizard({
               <div className="space-y-3">
                 <div className="space-y-2">
                   <Button
-                    onClick={() => setProviderMode("cohere")}
+                    onClick={() => setProviderMode("ollama")}
                     className="w-full"
                   >
-                    Use Cohere API
+                    <OllamaIcon className="opacity-100" />
+                    Ollama
                   </Button>
                   <p className="text-xs text-muted-foreground text-center">
-                    Cloud-based, high quality. Free tier available.
+                    Runs on your machine. No API key needed.
                   </p>
                 </div>
                 <div className="relative">
@@ -124,13 +126,14 @@ export function OnboardingWizard({
                 <div className="space-y-2">
                   <Button
                     variant="outline"
-                    onClick={() => setProviderMode("ollama")}
+                    onClick={() => setProviderMode("cohere")}
                     className="w-full"
                   >
-                    Use Ollama (Local)
+                    <CohereIcon className="opacity-100" />
+                    Cohere
                   </Button>
                   <p className="text-xs text-muted-foreground text-center">
-                    Runs on your machine. No API key needed.
+                    Cloud-based, high quality. Free tier available.
                   </p>
                 </div>
               </div>

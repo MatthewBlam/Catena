@@ -225,6 +225,87 @@ describe("SourceList — sources:changed debounce (F11)", () => {
   });
 });
 
+describe("SourceList — last-sync error details", () => {
+  it("expands a partial sync's stored errors on click", async () => {
+    mockApi();
+    render(
+      <SourceList
+        sources={[
+          makeSource({
+            lastSyncStatus: "partial",
+            lastSyncError: "Doc A failed: rate limited",
+            lastSyncErrorCount: 1,
+          }),
+        ]}
+        onRefresh={vi.fn()}
+      />,
+    );
+    await screen.findByText("Source One");
+
+    const summary = screen.getByText("Last sync finished with 1 error");
+    // Collapsed by default — the detail isn't in the DOM yet.
+    expect(
+      screen.queryByText("Doc A failed: rate limited"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(summary);
+
+    expect(screen.getByText("Doc A failed: rate limited")).toBeInTheDocument();
+
+    // Clicking again collapses it.
+    fireEvent.click(summary);
+    expect(
+      screen.queryByText("Doc A failed: rate limited"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("notes how many errors were not stored when the count exceeds the sample", async () => {
+    mockApi();
+    render(
+      <SourceList
+        sources={[
+          makeSource({
+            lastSyncStatus: "error",
+            lastSyncError: "line one\nline two",
+            lastSyncErrorCount: 5,
+          }),
+        ]}
+        onRefresh={vi.fn()}
+      />,
+    );
+    await screen.findByText("Source One");
+
+    // An `error` row summarizes with its first stored line; the rest of the
+    // list (and the remainder note) only appears once expanded.
+    expect(screen.queryByText("line two")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("line one"));
+
+    expect(screen.getByText("line two")).toBeInTheDocument();
+    expect(screen.getByText("…and 3 more errors")).toBeInTheDocument();
+  });
+
+  it("renders a canceled sync as plain text with no expander", async () => {
+    mockApi();
+    render(
+      <SourceList
+        sources={[
+          makeSource({
+            lastSyncStatus: "cancelled",
+            lastSyncError: null,
+            lastSyncErrorCount: 0,
+          }),
+        ]}
+        onRefresh={vi.fn()}
+      />,
+    );
+    await screen.findByText("Source One");
+
+    const msg = screen.getByText("Last sync was canceled");
+    // Not inside a button — nothing to expand.
+    expect(msg.closest("button")).toBeNull();
+  });
+});
+
 describe("SourceList — Sync-all queue coherence (Finding 1)", () => {
   function threeSources(): SourceWithCount[] {
     return [

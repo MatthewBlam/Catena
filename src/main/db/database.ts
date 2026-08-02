@@ -620,6 +620,16 @@ export function getSetting(db: Database.Database, key: string): string | null {
   return row.value;
 }
 
+/**
+ * Removes a setting row entirely, so a subsequent `getSetting` returns `null`
+ * and callers fall back to their hardcoded default. Preferred over writing an
+ * empty string, which every reader would then have to treat as "unset". No-op
+ * if the key isn't present.
+ */
+export function deleteSetting(db: Database.Database, key: string): void {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+}
+
 // --- Recent Searches ---
 
 /** How long a saved search survives before pruneExpiredRecentSearches sweeps it. */

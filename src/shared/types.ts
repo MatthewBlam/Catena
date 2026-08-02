@@ -263,4 +263,7 @@ export interface OllamaStatusDetail {
   chatReady: boolean;
   /** A managed setup run is in flight (single-flight guard). */
   setupInProgress: boolean;
+  /** A Commons-managed engine binary is present on disk (independent of whether
+   * it's running) — i.e. there is something for "Uninstall Ollama" to remove. */
+  managedBinaryPresent: boolean;
 }

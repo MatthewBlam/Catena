@@ -19,6 +19,7 @@ vi.mock("../../ollama/setup", () => ({
     setupInProgress,
   })),
 }));
+vi.mock("../../ollama/uninstall", () => ({ uninstallOllama: vi.fn() }));
 vi.mock("../../db/singleton", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../db/database", () => ({ upsertSetting: vi.fn() }));
 vi.mock("../../telemetry/posthog", () => ({ track: vi.fn() }));
@@ -26,6 +27,8 @@ vi.mock("../../telemetry/posthog", () => ({ track: vi.fn() }));
 import { ipcMain } from "electron";
 import { registerOllamaHandlers } from "../ollama-handlers";
 import { runSetup, getStatusDetail } from "../../ollama/setup";
+import { uninstallOllama } from "../../ollama/uninstall";
+import { track } from "../../telemetry/posthog";
 import { getDb } from "../../db/singleton";
 import { upsertSetting } from "../../db/database";
 
@@ -95,9 +98,13 @@ describe("settings:set-ollama-chat-model", () => {
 
 describe("single-flight setup", () => {
   it("rejects a second setup while one is in flight and reports it in status", async () => {
-    // A setup that never resolves keeps the single-flight guard held.
+    // A setup that stays pending keeps the single-flight guard held. Kept
+    // controllable so we can release it and not leak the guard into later tests.
+    let releaseSetup!: () => void;
     (runSetup as ReturnType<typeof vi.fn>).mockReturnValue(
-      new Promise(() => {}),
+      new Promise<void>((r) => {
+        releaseSetup = r;
+      }),
     );
 
     const setup = handlerFor("ollama:setup");
@@ -111,11 +118,61 @@ describe("single-flight setup", () => {
     const status = await handlerFor("ollama:status")({});
     expect(getStatusDetail).toHaveBeenLastCalledWith(true);
     expect(status).toMatchObject({ setupInProgress: true });
+
+    // Release the in-flight op so the guard is clear for the next test.
+    releaseSetup();
+    await first;
   });
 });
 
 describe("ollama:cancel-setup", () => {
   it("does not throw when there is nothing to cancel", () => {
     expect(() => handlerFor("ollama:cancel-setup")({})).not.toThrow();
+  });
+});
+
+describe("ollama:uninstall", () => {
+  it("runs the uninstall and emits start/complete telemetry", async () => {
+    (uninstallOllama as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await handlerFor("ollama:uninstall")({});
+
+    expect(uninstallOllama).toHaveBeenCalledTimes(1);
+    expect(track).toHaveBeenCalledWith(
+      "commons_ollama_uninstall_started",
+      expect.anything(),
+    );
+    expect(track).toHaveBeenCalledWith(
+      "commons_ollama_uninstall_completed",
+      expect.anything(),
+    );
+  });
+
+  it("is rejected while a setup is already in flight", async () => {
+    let releaseSetup!: () => void;
+    (runSetup as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise<void>((r) => {
+        releaseSetup = r;
+      }),
+    );
+    const first = handlerFor("ollama:setup")({});
+    void Promise.resolve(first).catch(() => {});
+
+    await expect(handlerFor("ollama:uninstall")({})).rejects.toThrow(
+      /already in progress/i,
+    );
+    expect(uninstallOllama).not.toHaveBeenCalled();
+
+    // Release so the guard doesn't leak into the next test.
+    releaseSetup();
+    await first;
+  });
+
+  it("releases the guard so a later setup can run", async () => {
+    (uninstallOllama as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (runSetup as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await handlerFor("ollama:uninstall")({});
+    await expect(handlerFor("ollama:setup")({})).resolves.toBeUndefined();
   });
 });

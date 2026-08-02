@@ -59,6 +59,26 @@ export async function hasModel(
   return models.some((m) => m === model || m.startsWith(`${model}:`));
 }
 
+/**
+ * Removes `model` from the local store via `DELETE /api/delete` (Ollama unlinks
+ * the underlying blobs itself, so we never touch `~/.ollama` by hand). Treats a
+ * 404 as success — the goal state is "model is gone", and it not being there is
+ * that state. Only a real server error (5xx, malformed) rejects.
+ */
+export async function deleteModel(
+  model: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${OLLAMA_BASE_URL}/api/delete`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+    signal: signal ?? AbortSignal.timeout(30_000),
+  });
+  if (res.ok || res.status === 404) return;
+  throw new Error(`Ollama could not delete "${model}" (HTTP ${res.status}).`);
+}
+
 export interface PullProgress {
   /** Ollama's own status line, e.g. "pulling manifest" / "pulling <digest>". */
   message: string;

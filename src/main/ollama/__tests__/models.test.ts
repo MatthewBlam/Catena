@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isEmbeddingModel, listModels, pullModel } from "../models";
+import {
+  deleteModel,
+  isEmbeddingModel,
+  listModels,
+  pullModel,
+} from "../models";
 
 /** Builds a `ReadableStream<Uint8Array>` that emits each string chunk then closes. */
 function streamFrom(chunks: string[]): ReadableStream<Uint8Array> {
@@ -120,5 +125,48 @@ describe("pullModel", () => {
     } as unknown as Response);
 
     await expect(pullModel("m", vi.fn())).rejects.toThrow(/HTTP 500/);
+  });
+});
+
+describe("deleteModel", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("issues a DELETE to /api/delete with the model in the body", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    } as Response);
+
+    await expect(deleteModel("nomic-embed-text")).resolves.toBeUndefined();
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url)).toContain("/api/delete");
+    expect(init?.method).toBe("DELETE");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      model: "nomic-embed-text",
+    });
+  });
+
+  it("treats a 404 as success (model already gone)", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    } as Response);
+
+    await expect(deleteModel("missing")).resolves.toBeUndefined();
+  });
+
+  it("throws on a real server error", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+    } as Response);
+
+    await expect(deleteModel("m")).rejects.toThrow(/HTTP 500/);
   });
 });

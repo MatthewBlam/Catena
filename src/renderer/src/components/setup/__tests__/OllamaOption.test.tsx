@@ -23,6 +23,7 @@ const READY: OllamaStatusDetail = {
   embeddingReady: true,
   chatReady: false,
   setupInProgress: false,
+  managedBinaryPresent: true,
 };
 
 const NOT_READY: OllamaStatusDetail = {
@@ -32,6 +33,7 @@ const NOT_READY: OllamaStatusDetail = {
   embeddingReady: false,
   chatReady: false,
   setupInProgress: false,
+  managedBinaryPresent: false,
 };
 
 // Lets a test drive the progress stream that `onOllamaProgress` delivers.

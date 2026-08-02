@@ -236,7 +236,7 @@ function App(): React.JSX.Element {
                         type="button"
                         onClick={() => handleDeleteRecent(r.id)}
                         aria-label={`Remove "${r.query}" from recents`}
-                        className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded p-0.5 text-sidebar-foreground/60 outline-none transition-colors hover:text-sidebar-foreground focus-visible:ring-[3px] focus-visible:ring-ring/24 group-hover:block group-focus-within:block"
+                        className="absolute cursor-pointer right-1.5 top-1/2 hidden -translate-y-1/2 rounded p-0.5 text-sidebar-foreground/60 outline-none transition-colors hover:text-sidebar-foreground focus-visible:ring-[3px] focus-visible:ring-ring/24 group-hover:block group-focus-within:block"
                       >
                         <XIcon className="size-3.5" />
                       </button>

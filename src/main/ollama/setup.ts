@@ -2,7 +2,7 @@ import type { OllamaProgress, OllamaStatusDetail } from "../../shared/types";
 import { getDb } from "../db/singleton";
 import { upsertSetting, getSetting } from "../db/database";
 import { EMBED_MODEL, CHAT_MODEL } from "./platform";
-import { ensureEngine, isEngineUp } from "./runtime";
+import { ensureEngine, isEngineUp, managedBinaryExists } from "./runtime";
 import { listModels, hasModel, pullModel, isEmbeddingModel } from "./models";
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -92,5 +92,6 @@ export async function getStatusDetail(
     embeddingReady: embeddingModels.length > 0,
     chatReady,
     setupInProgress,
+    managedBinaryPresent: managedBinaryExists(),
   };
 }

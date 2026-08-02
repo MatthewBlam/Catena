@@ -99,6 +99,10 @@ export function SourceList({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkRemoving, setBulkRemoving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Which source has its last-sync error list expanded. Separate from
+  // `expandedId` (the document list) so a user can read the error without
+  // opening the docs, and vice versa.
+  const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [docsCache, setDocsCache] = useState<Map<string, Document[]>>(
     new Map(),
@@ -524,6 +528,23 @@ export function SourceList({
         // right above a SyncPanel already showing the same failure.
         const statusMsg =
           isSyncing || showPanel ? null : syncStatusMessage(source);
+        // The stored error text (main persists up to the first few messages,
+        // newline-joined) turns the one-line status into an expandable list so
+        // the user can actually read what failed. `error`/`partial` always carry
+        // it; `cancelled` doesn't, so it renders as plain text.
+        const errorLines =
+          statusMsg && source.lastSyncError
+            ? source.lastSyncError
+                .split("\n")
+                .filter((l) => l.trim().length > 0)
+            : [];
+        const hasErrorDetail = errorLines.length > 0;
+        const isErrorExpanded = expandedErrorId === source.id;
+        // Count persisted may exceed the stored sample — note the remainder.
+        const hiddenErrorCount = Math.max(
+          0,
+          source.lastSyncErrorCount - errorLines.length,
+        );
 
         return (
           <div key={source.id}>
@@ -555,23 +576,6 @@ export function SourceList({
                       {source.documentCount} doc
                       {source.documentCount !== 1 ? "s" : ""} synced
                     </p>
-                    {statusMsg && (
-                      <p
-                        className={cn(
-                          "flex items-center gap-1 text-xs mt-0.5",
-                          statusMsg.tone === "error" &&
-                            "text-destructive-foreground",
-                          statusMsg.tone === "warning" &&
-                            "text-warning-foreground",
-                          statusMsg.tone === "muted" && "text-muted-foreground",
-                        )}
-                      >
-                        {statusMsg.tone !== "muted" && (
-                          <AlertTriangleIcon className="size-3 shrink-0" />
-                        )}
-                        <span className="truncate">{statusMsg.text}</span>
-                      </p>
-                    )}
                   </div>
                 </button>
                 {selecting ? (
@@ -604,6 +608,66 @@ export function SourceList({
                   </div>
                 )}
               </div>
+              {statusMsg &&
+                (hasErrorDetail ? (
+                  <div className="mt-1 pl-7">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedErrorId((cur) =>
+                          cur === source.id ? null : source.id,
+                        )
+                      }
+                      aria-expanded={isErrorExpanded}
+                      className={cn(
+                        "flex max-w-full items-center gap-1 text-xs cursor-pointer rounded outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24",
+                        statusMsg.tone === "error" &&
+                          "text-destructive-foreground",
+                        statusMsg.tone === "warning" &&
+                          "text-warning-foreground",
+                      )}
+                    >
+                      <AlertTriangleIcon className="size-3 shrink-0" />
+                      <span className="truncate">{statusMsg.text}</span>
+                      <ChevronRightIcon
+                        className={cn(
+                          "size-3 shrink-0 transition-transform",
+                          isErrorExpanded && "rotate-90",
+                        )}
+                      />
+                    </button>
+                    {isErrorExpanded && (
+                      <ul className="mt-1 space-y-0.5 pl-4 text-xs text-muted-foreground">
+                        {errorLines.map((line, i) => (
+                          <li key={i} className="break-words">
+                            {line}
+                          </li>
+                        ))}
+                        {hiddenErrorCount > 0 && (
+                          <li className="italic">
+                            …and {hiddenErrorCount} more error
+                            {hiddenErrorCount !== 1 ? "s" : ""}
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                ) : (
+                  <p
+                    className={cn(
+                      "mt-1 pl-7 flex items-center gap-1 text-xs",
+                      statusMsg.tone === "error" &&
+                        "text-destructive-foreground",
+                      statusMsg.tone === "warning" && "text-warning-foreground",
+                      statusMsg.tone === "muted" && "text-muted-foreground",
+                    )}
+                  >
+                    {statusMsg.tone !== "muted" && (
+                      <AlertTriangleIcon className="size-3 shrink-0" />
+                    )}
+                    <span className="truncate">{statusMsg.text}</span>
+                  </p>
+                ))}
             </div>
             {isExpanded && (
               <div className="rounded-b-lg border border-t-0 border-border bg-card px-4 pb-1">

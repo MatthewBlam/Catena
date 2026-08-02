@@ -24,6 +24,12 @@ interface CommonsAPI {
   pullOllamaChatModel(): Promise<void>;
   setOllamaModel(model: string): Promise<void>;
   setOllamaChatModel(model: string): Promise<void>;
+  /**
+   * Completely removes the Commons-managed Ollama: stops our engine, deletes the
+   * pulled models + downloaded binary, and clears the Ollama model settings. A
+   * user's own system/manual Ollama is never killed or removed.
+   */
+  uninstallOllama(): Promise<void>;
   /** Streams managed-Ollama setup/pull progress to any interested window. */
   onOllamaProgress(
     callback: (progress: import("../shared/types").OllamaProgress) => void,

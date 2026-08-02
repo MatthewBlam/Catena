@@ -55,6 +55,13 @@ export function SyncPanel({
     "syncing" | "complete" | "canceled" | "error"
   >("syncing");
   const [error, setError] = useState<string | null>(null);
+  // The user's explicit expand/collapse choice for the error list, or null when
+  // they haven't touched it — in which case it defaults open on a
+  // completed-with-errors sync (see `errorsOpen` below) so the reason is visible
+  // without a click, while staying collapsible.
+  const [errorsOpenOverride, setErrorsOpenOverride] = useState<boolean | null>(
+    null,
+  );
   const [elapsed, setElapsed] = useState(0);
   // The sync's true start (epoch ms), learned from `SyncProgress.startedAt`.
   // Null until the first progress event (or the observe-only mount fetch
@@ -62,6 +69,9 @@ export function SyncPanel({
   // then — accurate for an autoStart panel (it starts the sync at mount).
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const startedRef = useRef(false);
+  // Latest progress, mirrored to a ref so the auto-dismiss timer can read the
+  // final error count without re-arming when `progress` state changes.
+  const progressRef = useRef<SyncProgress | null>(null);
   // Mirrors `status` so the async sync callbacks can read the *current* value
   // without a stale closure. The only thing that moves status off "syncing"
   // before the sync settles is the user hitting Cancel.
@@ -96,6 +106,7 @@ export function SyncPanel({
     const unsub = window.api.onSyncProgress((p) => {
       if (p.sourceId === sourceId) {
         setProgress(p);
+        progressRef.current = p;
         // Learn the true start once. It is identical across every event of a
         // sync, so keep the first non-null value we see and ignore the rest.
         const ms = Date.parse(p.startedAt);
@@ -178,11 +189,27 @@ export function SyncPanel({
     }
     // H3: only a clean completion self-dismisses on a timer. An "error" or
     // "canceled" panel stays put — with a Dismiss button — until the user acts.
+    // A completion *with* per-document errors is treated the same way: the timer
+    // re-checks the latest error count (via the ref, so a final error event that
+    // lands right around completion still holds it open) and skips the dismiss,
+    // leaving the panel and its Dismiss button so the user can read the errors.
     if (status !== "complete") return;
-    const timer = setTimeout(() => onCompleteRef.current(), 1500);
+    const timer = setTimeout(() => {
+      if ((progressRef.current?.errors.length ?? 0) > 0) return;
+      onCompleteRef.current();
+    }, 1500);
     return () => clearTimeout(timer);
     // Depends ONLY on the status transition — see the onCompleteRef note above.
   }, [status]);
+
+  // A completion that carried per-document errors. Kept out of "clean complete"
+  // so it does not auto-dismiss and its footer/label reflect the errors.
+  const completedWithErrors =
+    status === "complete" && (progress?.errors.length ?? 0) > 0;
+
+  // Default the error list open on a completed-with-errors sync; the user's own
+  // toggle (if any) wins.
+  const errorsOpen = errorsOpenOverride ?? completedWithErrors;
 
   function handleCancel(): void {
     window.api.cancelSync(sourceId).catch(() => {});
@@ -196,7 +223,9 @@ export function SyncPanel({
 
   const statusLabel =
     status === "complete"
-      ? "Sync complete"
+      ? completedWithErrors
+        ? "Sync completed with errors"
+        : "Sync complete"
       : status === "canceled"
         ? "Sync canceled"
         : status === "error"
@@ -212,7 +241,9 @@ export function SyncPanel({
             Cancel
           </Button>
         )}
-        {(status === "error" || status === "canceled") && (
+        {(status === "error" ||
+          status === "canceled" ||
+          completedWithErrors) && (
           <Button variant="ghost" size="xs" onClick={onComplete}>
             Dismiss
           </Button>
@@ -247,7 +278,11 @@ export function SyncPanel({
       {error && <p className="text-sm text-destructive-foreground">{error}</p>}
 
       {progress && progress.errors.length > 0 && (
-        <details className="text-xs">
+        <details
+          className="text-xs"
+          open={errorsOpen}
+          onToggle={(e) => setErrorsOpenOverride(e.currentTarget.open)}
+        >
           <summary className="cursor-pointer text-warning-foreground">
             {progress.errors.length} error
             {progress.errors.length > 1 ? "s" : ""}
@@ -273,7 +308,12 @@ export function SyncPanel({
               removed
             </p>
           )}
-          <p>{status === "complete" ? "Dismissing…" : "Canceled"}</p>
+          {/* A clean completion counts down to auto-dismiss; a completion with
+              errors stays put (see the settle effect) until the user dismisses,
+              so it must not claim to be "Dismissing…". */}
+          {!completedWithErrors && (
+            <p>{status === "complete" ? "Dismissing…" : "Canceled"}</p>
+          )}
         </div>
       )}
     </div>

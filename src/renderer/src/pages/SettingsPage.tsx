@@ -5,10 +5,12 @@ import { Input } from "@renderer/components/ui/input";
 import { Switch } from "@renderer/components/ui/switch";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { ConfirmDialog } from "@renderer/components/ui/confirm-dialog";
+import { CohereIcon, OllamaIcon } from "@renderer/components/brand-icons";
+import { OllamaInstallPanel } from "@renderer/components/setup/OllamaInstallPanel";
 import { debounce } from "@renderer/lib/utils";
 import { formatRelativeTime } from "@renderer/lib/format";
 import { openExternal } from "@renderer/lib/openExternal";
-import type { StorageStats } from "../../../shared/types";
+import type { StorageStats, OllamaStatusDetail } from "../../../shared/types";
 
 interface SettingsPageProps {
   visible: boolean;
@@ -48,6 +50,11 @@ export function SettingsPage({
   const [autoSyncing, setAutoSyncing] = useState(false);
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [showTelemetryConfirm, setShowTelemetryConfirm] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatusDetail | null>(
+    null,
+  );
+  const [uninstalling, setUninstalling] = useState(false);
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevVisibleRef = useRef(false);
   // Separate from `prevVisibleRef` above: that ref is updated inside the
@@ -68,8 +75,9 @@ export function SettingsPage({
       window.api.hasSecret("notion_token"),
       window.api.hasSecret("google_tokens"),
       window.api.getTelemetryEnabled(),
+      window.api.getOllamaStatusDetail(),
     ])
-      .then(([p, keyPresent, s, sync, notion, drive, telemetry]) => {
+      .then(([p, keyPresent, s, sync, notion, drive, telemetry, ollama]) => {
         setProvider(p);
         setHasKey(keyPresent);
         setStats(s);
@@ -80,6 +88,7 @@ export function SettingsPage({
         setHasNotion(notion);
         setHasDrive(drive);
         setTelemetryEnabled(telemetry);
+        setOllamaStatus(ollama);
         setLoadError(null);
       })
       .catch(() => {
@@ -322,6 +331,32 @@ export function SettingsPage({
     }
   }
 
+  async function handleUninstallOllama(): Promise<void> {
+    setUninstalling(true);
+    try {
+      await window.api.uninstallOllama();
+      // Re-read so the button reflects the now-removed install (and any provider
+      // fallout). Deliberately NOT onProviderReset() — keep the user in Settings
+      // where they can switch to Cohere, same reasoning as M10/M12 above.
+      refresh();
+    } catch {
+      setLoadError("Failed to uninstall Ollama.");
+    } finally {
+      setUninstalling(false);
+    }
+  }
+
+  // "Detected" = an engine is answering now, or a Commons-managed binary is on
+  // disk. The Uninstall button is enabled only when something is detected, so
+  // once a teardown removes everything it disables itself. `ready` also requires
+  // an embedding model, which gates the Settings install flow below.
+  const ollamaDetected =
+    !!ollamaStatus &&
+    (ollamaStatus.engineUp || ollamaStatus.managedBinaryPresent);
+  const ollamaReady =
+    !!ollamaStatus && ollamaStatus.engineUp && ollamaStatus.embeddingReady;
+  const canUninstallOllama = ollamaDetected;
+
   return (
     <div className="max-w-3xl mx-auto px-10 pt-3 pb-8">
       <h1 className="text-2xl font-semibold mb-1">Settings</h1>
@@ -347,14 +382,16 @@ export function SettingsPage({
                 size="sm"
                 onClick={() => handleSwitchProvider("cohere")}
               >
-                Cohere API
+                <CohereIcon className="opacity-100" />
+                Cohere
               </Button>
               <Button
                 variant={provider === "ollama" ? "default" : "outline"}
                 size="sm"
                 onClick={() => handleSwitchProvider("ollama")}
               >
-                Ollama (Local)
+                <OllamaIcon className="opacity-100" />
+                Ollama
               </Button>
             </div>
           </section>
@@ -477,6 +514,36 @@ export function SettingsPage({
               <p className="text-sm text-success-foreground">
                 API key updated successfully.
               </p>
+            )}
+          </section>
+        )}
+
+        {provider === "ollama" && (
+          <section className="space-y-3">
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Local Model
+            </h2>
+            {ollamaStatus === null ? (
+              <p className="text-sm text-muted-foreground">Checking Ollama…</p>
+            ) : ollamaReady ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-foreground">
+                  Ollama installed
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {ollamaStatus.embeddingModels.join(", ")}
+                </span>
+              </div>
+            ) : (
+              <>
+                <ErrorBanner variant="warning">
+                  Ollama isn&apos;t set up yet — search is disabled until you
+                  install it.
+                </ErrorBanner>
+                {/* Same one-click flow as the onboarding wizard. On success, refresh
+                    so the section flips to "installed" and the Danger Zone button enables. */}
+                <OllamaInstallPanel onInstalled={refresh} />
+              </>
             )}
           </section>
         )}
@@ -668,7 +735,45 @@ export function SettingsPage({
             >
               Disconnect Google Drive
             </Button>
+            <Button
+              variant="destructive-outline"
+              size="sm"
+              onClick={() => setShowUninstallConfirm(true)}
+              loading={uninstalling}
+              disabled={!canUninstallOllama}
+            >
+              Uninstall Ollama
+            </Button>
           </div>
+
+          <ConfirmDialog
+            open={showUninstallConfirm}
+            onOpenChange={setShowUninstallConfirm}
+            title="Uninstall Ollama?"
+            confirmLabel="Uninstall"
+            cancelLabel="Cancel"
+            confirmVariant="destructive"
+            onConfirm={() => void handleUninstallOllama()}
+          >
+            <p>
+              This removes the local Ollama engine Commons downloaded and the
+              models it pulled ({" "}
+              <span className="font-medium text-foreground">
+                freeing up around 2&nbsp;GB
+              </span>{" "}
+              ). Your synced documents stay on this device.
+            </p>
+            {provider === "ollama" && (
+              <p>
+                Ollama is your current search provider, so search will be
+                disabled until you switch to Cohere or set up Ollama again.
+              </p>
+            )}
+            <p>
+              A separate copy of Ollama you installed yourself is left
+              untouched.
+            </p>
+          </ConfirmDialog>
         </section>
       </div>
     </div>
