@@ -359,7 +359,24 @@ export function SettingsPage({
 
   return (
     <div className="max-w-3xl mx-auto px-10 pt-3 pb-8">
-      <h1 className="text-2xl font-semibold mb-1">Settings</h1>
+      <div className="flex items-center justify-between mb-1">
+        <h1 className="text-2xl font-semibold">Settings</h1>
+        {/* Compact light/dark toggle, moved here from a standalone Appearance
+            section: a switch flanked by sun/moon icons, the active side lit. */}
+        <div className="flex items-center gap-1.5">
+          <SunIcon
+            className={`size-4 ${dark ? "text-muted-foreground" : "text-foreground"}`}
+          />
+          <Switch
+            checked={dark}
+            onCheckedChange={() => onToggleTheme()}
+            aria-label="Dark theme"
+          />
+          <MoonIcon
+            className={`size-4 ${dark ? "text-foreground" : "text-muted-foreground"}`}
+          />
+        </div>
+      </div>
       <p className="text-muted-foreground text-sm mb-6">
         Manage your embedding provider and app data.
       </p>
@@ -448,30 +465,6 @@ export function SettingsPage({
             )}
           </section>
         </div>
-
-        <section className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Appearance
-          </h2>
-          <div className="flex gap-2">
-            <Button
-              variant={!dark ? "default" : "outline"}
-              size="sm"
-              onClick={() => dark && onToggleTheme()}
-            >
-              <SunIcon className="size-4 mr-1.5" />
-              Light
-            </Button>
-            <Button
-              variant={dark ? "default" : "outline"}
-              size="sm"
-              onClick={() => !dark && onToggleTheme()}
-            >
-              <MoonIcon className="size-4 mr-1.5" />
-              Dark
-            </Button>
-          </div>
-        </section>
 
         {provider === "cohere" && (
           <section className="space-y-3">

@@ -4,7 +4,7 @@ import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-nati
 const config: ForgeConfig = {
   packagerConfig: {
     name: "Commons",
-    executableName: "commons",
+    executableName: "Commons",
     appBundleId: "com.commons.app",
     icon: "./build/icon",
     prune: true,

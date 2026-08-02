@@ -1,5 +1,5 @@
 {
-  "name": "commons-app",
+  "name": "Commons",
   "version": "0.1.0",
   "description": "Search your club's docs — local-first RAG for student organizations",
   "type": "module",
