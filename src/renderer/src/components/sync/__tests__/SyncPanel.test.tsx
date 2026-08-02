@@ -6,6 +6,7 @@ import {
   fireEvent,
   cleanup,
   act,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { SyncPanel } from "../SyncPanel";
@@ -88,7 +89,9 @@ describe("SyncPanel", () => {
     expect(
       screen.queryByRole("button", { name: "Cancel" }),
     ).not.toBeInTheDocument();
-    expect(onSettled).toHaveBeenCalledTimes(1);
+    // onSettled fires from a passive effect after the status→error render, so
+    // wait for it rather than asserting synchronously (a race under load).
+    await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
     expect(onComplete).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
@@ -107,7 +110,7 @@ describe("SyncPanel", () => {
       />,
     );
     await screen.findByText("Sync failed for My Source");
-    expect(onSettled1).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onSettled1).toHaveBeenCalledTimes(1));
 
     // Simulate SourceList's inline `onSettled={() => releaseSlot(id)}`, which
     // is a fresh function identity on every parent re-render.
@@ -142,7 +145,7 @@ describe("SyncPanel", () => {
     expect(screen.getByText("Canceled")).toBeInTheDocument();
     expect(screen.queryByText("Done")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
-    expect(onSettled).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
     expect(onComplete).not.toHaveBeenCalled();
   });
 
