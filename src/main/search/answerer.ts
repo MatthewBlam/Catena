@@ -26,7 +26,10 @@ interface GenerateOptions {
   ollamaChatModel?: string;
 }
 
-const COHERE_ANSWER_MODEL = "command-r";
+// Cohere retired the bare `command-r` alias (it now 404s). `command-a-03-2025`
+// is the current chat model and supports v2 chat with `documents` + citations,
+// which is exactly what the grounded-answer path relies on.
+const COHERE_ANSWER_MODEL = "command-a-03-2025";
 export const DEFAULT_OLLAMA_CHAT_MODEL = "llama3.2";
 
 /** Per-source cap sent to the model. Cohere recommends ≤300 words per snippet. */
@@ -60,6 +63,33 @@ function withTimeout(signal?: AbortSignal): AbortSignal {
 
 function failed(error = FAILED_MESSAGE): AnswerResponse {
   return { text: "", citations: [], errorKind: "failed", error };
+}
+
+/**
+ * A user-facing reason for a non-OK Cohere chat response, keyed by status so a
+ * rejected key, a rate limit, or an unavailable model each read differently
+ * instead of collapsing into one opaque "try again".
+ */
+function cohereChatErrorMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return `Cohere rejected your API key for answer generation (HTTP ${status}). Check the key in Settings.`;
+  }
+  if (status === 429) {
+    return "Cohere is rate-limiting answer requests (HTTP 429) — common on trial keys. Wait a moment and try again.";
+  }
+  if (status === 404) {
+    return `Cohere couldn't find the answer model "${COHERE_ANSWER_MODEL}" (HTTP 404). It may not be available to your account.`;
+  }
+  return `Cohere couldn't generate an answer (HTTP ${status}). Try again.`;
+}
+
+/** Best-effort read of an error response body for logging; never throws. */
+async function readBody(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -162,7 +192,17 @@ async function generateWithCohere(
     signal: withTimeout(opts.signal),
   });
 
-  if (!res.ok || !res.body) return failed();
+  if (!res.ok) {
+    // The real reason lived here and was being discarded — log the status +
+    // body so a failure is diagnosable, and return a status-specific message.
+    console.error(
+      `Cohere chat (answer) failed: HTTP ${res.status} ${res.statusText} — ${(
+        await readBody(res)
+      ).slice(0, 500)}`,
+    );
+    return failed(cohereChatErrorMessage(res.status));
+  }
+  if (!res.body) return failed();
 
   let text = "";
   const citations: AnswerCitation[] = [];

@@ -3,6 +3,10 @@ import type { EmbedConfig } from "./embedder";
 const SYSTEM_PROMPT =
   "You are a search query optimizer. Rewrite the user's question as a short keyword-rich search phrase (5-10 words). Output ONLY the rewritten query, nothing else.";
 
+// Must be a currently-available Cohere chat model — the old `command-r` alias
+// now 404s. Kept in sync with the answerer's `COHERE_ANSWER_MODEL`.
+const COHERE_REWRITE_MODEL = "command-a-03-2025";
+
 const COHERE_TIMEOUT_MS = 3_000;
 const OLLAMA_TIMEOUT_MS = 5_000;
 const OLLAMA_FALLBACK_MODEL = "llama3.2:1b";
@@ -59,7 +63,7 @@ async function rewriteWithCohere(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "command-r",
+      model: COHERE_REWRITE_MODEL,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: query },
@@ -68,7 +72,21 @@ async function rewriteWithCohere(
     signal: withTimeout(COHERE_TIMEOUT_MS, signal),
   });
 
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // A failed rewrite is swallowed (search falls back to the raw query), which
+    // hides that Cohere's chat endpoint is rejecting requests. Log it so a plain
+    // search surfaces the same root cause the AI answer hits — both use /v2/chat.
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      /* body unavailable */
+    }
+    console.error(
+      `Cohere chat (query rewrite) failed: HTTP ${res.status} ${res.statusText} — ${detail.slice(0, 300)}`,
+    );
+    return null;
+  }
 
   const data = (await res.json()) as {
     message?: { content?: Array<{ text?: string }> };

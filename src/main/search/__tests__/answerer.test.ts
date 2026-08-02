@@ -153,6 +153,34 @@ describe("generateAnswer — Cohere", () => {
     expect(res.text).toBe("");
   });
 
+  it("surfaces a status-specific reason instead of the generic message", async () => {
+    // A rate-limited chat response should read as such, not "try again".
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      body: null,
+      text: async () => "rate limit exceeded",
+    } as Response);
+    const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
+    expect(res.errorKind).toBe("failed");
+    expect(res.error).toMatch(/429/);
+    expect(res.error).toMatch(/rate-limit/i);
+  });
+
+  it("names the model on a 404 so a missing/unavailable model is obvious", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      body: null,
+      text: async () => "model not found",
+    } as Response);
+    const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
+    expect(res.error).toMatch(/404/);
+    expect(res.error).toMatch(/command-a-03-2025/);
+  });
+
   it("treats an empty answer as a soft failure", async () => {
     fetchMock.mockResolvedValueOnce(streamResponse(["data: [DONE]\n\n"]));
     const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
