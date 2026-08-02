@@ -3,9 +3,10 @@ import type { EmbedConfig } from "./embedder";
 const SYSTEM_PROMPT =
   "You are a search query optimizer. Rewrite the user's question as a short keyword-rich search phrase (5-10 words). Output ONLY the rewritten query, nothing else.";
 
-// Must be a currently-available Cohere chat model — the old `command-r` alias
-// now 404s. Kept in sync with the answerer's `COHERE_ANSWER_MODEL`.
-const COHERE_REWRITE_MODEL = "command-a-03-2025";
+// Rewriting a query to keywords is a trivial task, so use Cohere's smallest,
+// cheapest chat model (Command R7B). A 404/failure here is harmless — the search
+// just falls back to the raw query. (The old bare `command-r` alias now 404s.)
+const COHERE_REWRITE_MODEL = "command-r7b-12-2024";
 
 const COHERE_TIMEOUT_MS = 3_000;
 const OLLAMA_TIMEOUT_MS = 5_000;

@@ -178,7 +178,7 @@ describe("generateAnswer — Cohere", () => {
     } as Response);
     const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
     expect(res.error).toMatch(/404/);
-    expect(res.error).toMatch(/command-a-03-2025/);
+    expect(res.error).toMatch(/command-r-08-2024/);
   });
 
   it("treats an empty answer as a soft failure", async () => {

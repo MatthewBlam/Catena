@@ -26,10 +26,11 @@ interface GenerateOptions {
   ollamaChatModel?: string;
 }
 
-// Cohere retired the bare `command-r` alias (it now 404s). `command-a-03-2025`
-// is the current chat model and supports v2 chat with `documents` + citations,
-// which is exactly what the grounded-answer path relies on.
-const COHERE_ANSWER_MODEL = "command-a-03-2025";
+// Cohere retired the bare `command-r` alias (it now 404s). `command-r-08-2024`
+// is the current Command R snapshot — it supports v2 chat with `documents` +
+// citations (what grounded answers rely on) and is far cheaper than the
+// flagship Command A while staying strong at RAG extraction.
+const COHERE_ANSWER_MODEL = "command-r-08-2024";
 export const DEFAULT_OLLAMA_CHAT_MODEL = "llama3.2";
 
 /** Per-source cap sent to the model. Cohere recommends ≤300 words per snippet. */
