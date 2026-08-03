@@ -305,7 +305,7 @@ export function closeDb(): void {
 This is the **singleton pattern** — ensures only one database connection exists for the entire app lifetime.
 
 - **`_db`** — Module-level variable. Starts as `null`. Once `getDb()` is called, it holds the connection.
-- **`app.getPath('userData')`** — Returns the OS-specific user data directory (e.g., `~/Library/Application Support/commons-app` on macOS). This is where Electron apps are supposed to store persistent data.
+- **`app.getPath('userData')`** — Returns the OS-specific user data directory (e.g., `~/Library/Application Support/Commons` on macOS). This is where Electron apps are supposed to store persistent data.
 - **`new Database(dbPath)`** — Opens (or creates) a SQLite database file at that path using `better-sqlite3`, a synchronous native SQLite binding for Node.js.
 - **`pragma('journal_mode = WAL')`** — Enables Write-Ahead Logging. Default SQLite uses a rollback journal which locks the entire database during writes. WAL allows concurrent reads during writes — much better for an app where the UI might query while a sync is inserting data.
 - **`pragma('foreign_keys = ON')`** — SQLite has foreign key support but it's disabled by default. This turns it on so `ON DELETE CASCADE` actually works (deleting a source cascades to its documents and chunks).

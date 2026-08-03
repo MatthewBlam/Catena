@@ -686,7 +686,7 @@ export function SettingsPage({
               className="px-0"
               onClick={() => {
                 void openExternal(
-                  "https://github.com/MatthewBlam/commons-app/blob/main/PRIVACY.md",
+                  "https://github.com/MatthewBlam/Commons/blob/main/PRIVACY.md",
                 );
               }}
             >

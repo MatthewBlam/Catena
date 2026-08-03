@@ -95,4 +95,4 @@ to Notion. It sees an authorization code in transit and stores nothing.
 
 ## Questions
 
-Open an issue: <https://github.com/MatthewBlam/commons-app/issues>.
+Open an issue: <https://github.com/MatthewBlam/Commons/issues>.

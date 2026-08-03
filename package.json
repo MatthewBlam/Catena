@@ -6,13 +6,13 @@
   "main": "./dist/main/index.js",
   "author": "Matthew Blam",
   "license": "MIT",
-  "homepage": "https://github.com/MatthewBlam/commons-app#readme",
+  "homepage": "https://github.com/MatthewBlam/Commons#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MatthewBlam/commons-app.git"
+    "url": "git+https://github.com/MatthewBlam/Commons.git"
   },
   "bugs": {
-    "url": "https://github.com/MatthewBlam/commons-app/issues"
+    "url": "https://github.com/MatthewBlam/Commons/issues"
   },
   "packageManager": "pnpm@11.5.2",
   "scripts": {

@@ -35,8 +35,8 @@ you connect.
 ## Setup
 
 ```sh
-git clone https://github.com/MatthewBlam/commons-app.git
-cd commons-app
+git clone https://github.com/MatthewBlam/Commons.git
+cd Commons
 pnpm install          # postinstall rebuilds better-sqlite3 for Electron
 cp .env.example .env  # then fill in the values below
 pnpm dev

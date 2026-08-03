@@ -7,8 +7,8 @@ To fully reset the app (delete the database and start from onboarding):
 ```sh
 rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/commons.db"
 # or manually:
-# macOS: rm ~/Library/Application\ Support/commons-app/commons.db
-# Windows: del %APPDATA%\commons-app\commons.db
+# macOS: rm ~/Library/Application\ Support/Commons/commons.db
+# Windows: del %APPDATA%\Commons\commons.db
 ```
 
 ---
