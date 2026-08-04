@@ -1,4 +1,4 @@
-name = "commons-notion-auth"
+name = "catena-notion-auth"
 main = "src/index.ts"
 compatibility_date = "2026-07-13"
 

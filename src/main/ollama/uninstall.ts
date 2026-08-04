@@ -11,14 +11,14 @@ import {
 import { deleteModel } from "./models";
 
 /**
- * Completely undoes what Commons installed for the local provider: removes the
- * Commons-pulled models, the downloaded engine binary, and the model settings.
+ * Completely undoes what Catena installed for the local provider: removes the
+ * Catena-pulled models, the downloaded engine binary, and the model settings.
  * Deliberately conservative about anything we don't own —
  *   - `stopEngine()` kills the child only if we spawned it, so a reused
  *     system/manual Ollama keeps running;
  *   - only the managed binary directory (`<userData>/ollama`) is deleted, never
  *     a user's own install (which lives elsewhere);
- *   - only the two Commons-default models are removed, never the user's others.
+ *   - only the two Catena-default models are removed, never the user's others.
  *
  * Every step is best-effort so a single failure (e.g. the engine already gone)
  * still leaves the rest torn down rather than stranding a half-uninstall.

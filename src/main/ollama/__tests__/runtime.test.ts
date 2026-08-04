@@ -46,7 +46,7 @@ const binName = process.platform === "win32" ? "ollama.exe" : "ollama";
 
 beforeEach(() => {
   vi.resetModules();
-  h.userDataDir = mkdtempSync(join(tmpdir(), "commons-rt-"));
+  h.userDataDir = mkdtempSync(join(tmpdir(), "catena-rt-"));
   h.lastChild = null;
   h.spawn = vi.fn(() => {
     const c = makeChild();

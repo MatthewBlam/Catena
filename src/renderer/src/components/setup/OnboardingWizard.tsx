@@ -73,10 +73,10 @@ export function OnboardingWizard({
         {step === "welcome" && (
           <div className="space-y-4">
             <div>
-              <h1 className="text-2xl font-semibold">Welcome to Commons</h1>
+              <h1 className="text-2xl font-semibold">Welcome to Catena</h1>
               <p className="text-muted-foreground mt-1">
-                Search your club&apos;s docs — Notion pages, Google Drive files,
-                all in one place.
+                Search your organization&apos;s docs — Notion pages, Google
+                Drive files, all in one place.
               </p>
             </div>
             <p className="text-sm text-muted-foreground">
@@ -95,7 +95,7 @@ export function OnboardingWizard({
                 Choose an embedding provider
               </h2>
               <p className="text-muted-foreground text-sm mt-1">
-                Commons needs an embedding provider to search your docs.
+                Catena needs an embedding provider to search your docs.
               </p>
             </div>
 

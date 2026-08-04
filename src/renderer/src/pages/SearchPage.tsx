@@ -301,53 +301,74 @@ export function SearchPage({
     [handleSearch],
   );
 
-  const handleGenerateAnswer = useCallback(async () => {
-    if (!results || results.length === 0) return;
-    const rid = ++answerReqIdRef.current;
-    setAnswer({ status: "streaming", text: "", citations: [] });
-    // Send the query the results belong to (not the edited input), and title-only
-    // docs — main re-fetches the authoritative chunk text by id.
-    const docs = results.map((r) => ({
-      chunkId: r.chunkId,
-      documentTitle: r.documentTitle,
-    }));
-    try {
-      const res = await window.api.generateAnswer({
-        query: lastQuery,
-        requestId: rid,
-        docs,
-      });
-      // A superseded (or user-cancelled) generation is dropped: the newer request,
-      // or the Stop handler, already owns the answer state.
-      if (rid !== answerReqIdRef.current || res.cancelled) return;
-      if (res.errorKind) {
+  const generateAnswer = useCallback(
+    async (retry: boolean) => {
+      if (!results || results.length === 0) return;
+      const rid = ++answerReqIdRef.current;
+      setAnswer({ status: "streaming", text: "", citations: [] });
+      // Send the query the results belong to (not the edited input), and title-only
+      // docs — main re-fetches the authoritative chunk text by id.
+      const docs = results.map((r) => ({
+        chunkId: r.chunkId,
+        documentTitle: r.documentTitle,
+      }));
+      try {
+        const res = await window.api.generateAnswer({
+          query: lastQuery,
+          requestId: rid,
+          docs,
+          retry,
+        });
+        // A superseded (or user-cancelled) generation is dropped: the newer request,
+        // or the Stop handler, already owns the answer state.
+        if (rid !== answerReqIdRef.current || res.cancelled) return;
+        if (res.errorKind) {
+          setAnswer({
+            status: "error",
+            text: "",
+            citations: [],
+            error: res.error,
+            errorKind: res.errorKind,
+          });
+        } else {
+          setAnswer({
+            status: "done",
+            text: res.text,
+            citations: res.citations,
+          });
+        }
+      } catch {
+        if (rid !== answerReqIdRef.current) return;
         setAnswer({
           status: "error",
           text: "",
           citations: [],
-          error: res.error,
-          errorKind: res.errorKind,
+          error: "Couldn't generate an answer. Try again.",
+          errorKind: "failed",
         });
-      } else {
-        setAnswer({ status: "done", text: res.text, citations: res.citations });
       }
-    } catch {
-      if (rid !== answerReqIdRef.current) return;
-      setAnswer({
-        status: "error",
-        text: "",
-        citations: [],
-        error: "Couldn't generate an answer. Try again.",
-        errorKind: "failed",
-      });
-    }
-  }, [results, lastQuery]);
+    },
+    [results, lastQuery],
+  );
+
+  // Two entry points into the same generation, kept separate so the retry flag is
+  // never at the mercy of what a caller happens to pass as its first argument
+  // (`onInstalled` in AnswerPanel wires straight through to onRetry).
+  const handleGenerateAnswer = useCallback(
+    () => generateAnswer(false),
+    [generateAnswer],
+  );
+  const handleRetryAnswer = useCallback(
+    () => generateAnswer(true),
+    [generateAnswer],
+  );
 
   const handleStopAnswer = useCallback(() => {
     // Bump the token so the in-flight resolve and any late deltas are dropped,
-    // abort main-side, and return to the Generate button.
+    // abort main-side, and return to the Generate button. Reported as a user stop,
+    // unlike the aborts a new search or a restore issues.
     answerReqIdRef.current += 1;
-    window.api.cancelAnswer().catch(() => {});
+    window.api.cancelAnswer("user_stop").catch(() => {});
     setAnswer(IDLE_ANSWER);
   }, []);
 
@@ -462,7 +483,7 @@ export function SearchPage({
             errorKind={answer.errorKind}
             onGenerate={handleGenerateAnswer}
             onStop={handleStopAnswer}
-            onRetry={handleGenerateAnswer}
+            onRetry={handleRetryAnswer}
           />
         )}
 

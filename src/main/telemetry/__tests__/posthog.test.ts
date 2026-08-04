@@ -74,11 +74,11 @@ describe("telemetry opt-out (C3)", () => {
     const t = await loadTelemetry("phc_test");
     t.initTelemetry(db);
 
-    t.track("commons_search_executed", { result_count: 1 });
+    t.track("catena_search_executed", { result_count: 1 });
     expect(capture).toHaveBeenCalledTimes(1);
 
     t.setTelemetryEnabled(db, false);
-    t.track("commons_search_executed", { result_count: 2 });
+    t.track("catena_search_executed", { result_count: 2 });
 
     expect(capture).toHaveBeenCalledTimes(1);
   });
@@ -101,11 +101,11 @@ describe("telemetry opt-out (C3)", () => {
     const t = await loadTelemetry("phc_test");
     t.initTelemetry(db);
 
-    t.track("commons_app_opened");
+    t.track("catena_app_opened");
     expect(capture).not.toHaveBeenCalled();
 
     t.setTelemetryEnabled(db, true);
-    t.track("commons_app_opened");
+    t.track("catena_app_opened");
 
     expect(capture).toHaveBeenCalledTimes(1);
   });

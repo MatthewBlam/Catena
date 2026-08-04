@@ -1,10 +1,10 @@
-# Commons — PRD & Implementation Plan
+# Catena — PRD & Implementation Plan
 
 ## Context
 
-Student clubs scatter their knowledge across Notion workspaces and Google Drive folders — onboarding guides, project specs, meeting notes, policies. When a new member asks "how do I get reimbursed?" or "what does a tech lead do?", the answer exists somewhere but nobody knows where. Commons solves this by letting clubs connect their docs, index them locally, and search across everything in one place.
+Student organizations scatter their knowledge across Notion workspaces and Google Drive folders — onboarding guides, project specs, meeting notes, policies. When a new member asks "how do I get reimbursed?" or "what does a tech lead do?", the answer exists somewhere but nobody knows where. Catena solves this by letting organizations connect their docs, index them locally, and search across everything in one place.
 
-Commons is a local-first Electron desktop app. No hosted backend. Users bring their own Cohere API key for search quality (embeddings + reranking) or fall back to free local embeddings via Ollama. The MVP focuses on **finding the right documents** — search-results-only, no LLM answer generation yet.
+Catena is a local-first Electron desktop app. No hosted backend. Users bring their own Cohere API key for search quality (embeddings + reranking) or fall back to free local embeddings via Ollama. The MVP focuses on **finding the right documents** — search-results-only, no LLM answer generation yet.
 
 ---
 
@@ -12,11 +12,11 @@ Commons is a local-first Electron desktop app. No hosted backend. Users bring th
 
 ### One-Line Pitch
 
-> Commons is a local-first desktop app that lets student clubs connect their Notion and Google Drive docs, then search across all their scattered knowledge.
+> Catena is a local-first desktop app that lets student organizations connect their Notion and Google Drive docs, then search across all their scattered knowledge.
 
 ### Target Users
 
-Any student club officer or member who needs to find information across their club's docs. Not school-specific.
+Any student organization officer or member who needs to find information across their organization's docs. Not school-specific.
 
 ### Core User Flow
 
@@ -48,7 +48,7 @@ Install app → Paste Cohere API key (or choose Ollama) → Connect Notion and/o
 
 ### Privacy Promise
 
-> Your club docs are indexed locally on your computer. We do not host your data. Search queries and selected snippets are sent to Cohere for embedding and reranking (unless you use local-only mode with Ollama).
+> Your organization docs are indexed locally on your computer. We do not host your data. Search queries and selected snippets are sent to Cohere for embedding and reranking (unless you use local-only mode with Ollama).
 
 ---
 
@@ -75,7 +75,7 @@ Install app → Paste Cohere API key (or choose Ollama) → Connect Notion and/o
 ### Project Structure
 
 ```
-commons-app/
+catena-app/
 ├── electron.vite.config.ts
 ├── package.json
 ├── src/
@@ -157,7 +157,7 @@ CREATE TABLE settings (
 
 ### Key Technical Decisions
 
-**Cosine similarity in JS (not sqlite-vec):** sqlite-vec is pre-v1 with ABI compatibility issues. For a typical club doc set (~1,000-5,000 chunks), brute-force cosine similarity over Float32Arrays in the main process is fast enough (<50ms). Revisit when/if chunk counts grow past 50k.
+**Cosine similarity in JS (not sqlite-vec):** sqlite-vec is pre-v1 with ABI compatibility issues. For a typical organization doc set (~1,000-5,000 chunks), brute-force cosine similarity over Float32Arrays in the main process is fast enough (<50ms). Revisit when/if chunk counts grow past 50k.
 
 **Electron safeStorage (not keytar):** keytar is deprecated since 2022. safeStorage is built into Electron, uses OS-level encryption (Keychain on macOS, DPAPI on Windows), and requires no native dependencies. Use the async API (`encryptStringAsync`/`decryptStringAsync`).
 
@@ -198,7 +198,7 @@ CREATE TABLE settings (
 - [ ] Build Cohere Rerank v4.0-pro integration (rerank top ~40 candidates, return top 5-8)
 - [ ] Build search results UI (question input, ranked results with snippets + source links)
 - [ ] Add example questions empty state
-- [ ] Seed DB with 5-10 sample club docs for testing
+- [ ] Seed DB with 5-10 sample organization docs for testing
 
 **Verify:** Can ask a question and get relevant ranked results from sample docs. Rerank meaningfully improves result order vs. raw cosine similarity.
 
@@ -217,7 +217,7 @@ CREATE TABLE settings (
 - [ ] Handle pagination (cursor-based, 50 items per page default)
 - [ ] Build source management UI (list connected sources, disconnect)
 
-**Verify:** Connect a real Notion workspace with club docs. Sync completes without errors. Can search across Notion content and open source links in browser.
+**Verify:** Connect a real Notion workspace with organization docs. Sync completes without errors. Can search across Notion content and open source links in browser.
 
 ### Milestone 4: Google Drive Connector (Week 4)
 
@@ -245,18 +245,18 @@ CREATE TABLE settings (
 - [ ] Empty states and loading states for all screens
 - [ ] Onboarding wizard flow (key setup → connect sources → sync → search)
 - [ ] Settings screen (change API key, answer mode toggle, clear data)
-- [ ] App icon and branding ("Commons")
+- [ ] App icon and branding ("Catena")
 - [ ] Test on a clean macOS machine and a clean Windows machine
 - [ ] Build and upload DMG + EXE to GitHub Releases
 - [ ] Write minimal README with setup instructions
 
-**Verify:** A friend can download the app, set it up from scratch, connect their club's Notion and Drive, sync, and search — without your help.
+**Verify:** A friend can download the app, set it up from scratch, connect their organization's Notion and Drive, sync, and search — without your help.
 
 ---
 
 ## Cohere Cost Estimate
 
-For a typical club with ~100 docs, ~1,000 chunks:
+For a typical organization with ~100 docs, ~1,000 chunks:
 
 | Operation                    | Tokens             | Cost    |
 | ---------------------------- | ------------------ | ------- |
@@ -264,7 +264,7 @@ For a typical club with ~100 docs, ~1,000 chunks:
 | Per query (embed + rerank)   | ~500 + ~20K tokens | ~$0.04  |
 | 100 queries/month            |                    | ~$4.00  |
 
-Trial key (1,000 calls/month) works for testing. Production key recommended for real use — pay-as-you-go, pennies per month for a typical club.
+Trial key (1,000 calls/month) works for testing. Production key recommended for real use — pay-as-you-go, pennies per month for a typical organization.
 
 ---
 

@@ -1,14 +1,14 @@
-# commons-notion-auth
+# catena-notion-auth
 
 A single-endpoint Cloudflare Worker that performs the Notion OAuth token
-exchange on Commons' behalf.
+exchange on Catena's behalf.
 
 ## Why this exists
 
 Notion's token endpoint requires HTTP Basic auth built from the integration's
 client secret, and offers no public-client / PKCE-only mode that omits it. A
 desktop app cannot hold a secret — anything in the bundle is recoverable with
-`strings` — so the exchange happens here instead. Commons keeps the PKCE flow and
+`strings` — so the exchange happens here instead. Catena keeps the PKCE flow and
 the `client_id` (neither is confidential); only the secret moves.
 
 Google needs no equivalent: a Google **Desktop app** client's secret is
@@ -28,7 +28,7 @@ pnpm dlx wrangler deploy
 Then put the deployed URL's **origin** in the app's `.env`:
 
 ```
-NOTION_TOKEN_PROXY_URL=https://commons-notion-auth.<your-subdomain>.workers.dev/notion/token
+NOTION_TOKEN_PROXY_URL=https://catena-notion-auth.<your-subdomain>.workers.dev/notion/token
 ```
 
 The app reads it at build time via the `define` block in
@@ -49,7 +49,7 @@ redirect URI registered in the Notion console.
 
 ## Rotating the secret
 
-The secret was in every Commons build produced before this Worker existed, so it
+The secret was in every Catena build produced before this Worker existed, so it
 must be treated as public. Rotate it in the Notion console, then
 `wrangler secret put NOTION_CLIENT_SECRET` again. No app rebuild is needed — the
 app never sees it.

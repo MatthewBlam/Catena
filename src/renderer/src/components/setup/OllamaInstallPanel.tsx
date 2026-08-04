@@ -41,7 +41,7 @@ export function OllamaInstallPanel({
     <div className="space-y-3">
       {error && <ErrorBanner variant="error">{error}</ErrorBanner>}
       <p className="text-sm text-muted-foreground">
-        Commons will download and run Ollama locally, then fetch the embedding
+        Catena will download and run Ollama locally, then fetch the embedding
         model it needs — no manual setup or account required. This can take a
         few minutes and around 300&nbsp;MB.
       </p>

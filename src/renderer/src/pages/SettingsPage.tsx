@@ -25,12 +25,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function SettingsPage({
-  visible,
-  dark,
-  onToggleTheme,
-  onProviderReset,
-}: SettingsPageProps): React.JSX.Element {
+export function SettingsPage({ visible, dark, onToggleTheme, onProviderReset }: SettingsPageProps): React.JSX.Element {
   const [provider, setProvider] = useState<string>("cohere");
   const [hasKey, setHasKey] = useState(false);
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -50,9 +45,7 @@ export function SettingsPage({
   const [autoSyncing, setAutoSyncing] = useState(false);
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [showTelemetryConfirm, setShowTelemetryConfirm] = useState(false);
-  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatusDetail | null>(
-    null,
-  );
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatusDetail | null>(null);
   const [uninstalling, setUninstalling] = useState(false);
   const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,13 +174,7 @@ export function SettingsPage({
   }
 
   async function handleRemoveKey(): Promise<void> {
-    if (
-      !confirm(
-        "Remove your Cohere API key? Search will be disabled until you add a " +
-          "new key. Your synced documents stay on this device.",
-      )
-    )
-      return;
+    if (!confirm("Remove your Cohere API key? Search will be disabled until you add a " + "new key. Your synced documents stay on this device.")) return;
     try {
       await window.api.deleteSecret("cohere_api_key");
       // M12: deliberately NOT onProviderReset() — that flips App to ready=false,
@@ -200,21 +187,13 @@ export function SettingsPage({
     }
   }
 
-  async function handleSwitchProvider(
-    newProvider: "cohere" | "ollama",
-  ): Promise<void> {
+  async function handleSwitchProvider(newProvider: "cohere" | "ollama"): Promise<void> {
     if (newProvider === provider) return;
     // A null `stats` means the count fetch failed — we cannot rule out that
     // there are chunks to invalidate, so prompt anyway. (The old `stats && …`
     // guard let a failed fetch skip the confirm entirely.)
     const mayHaveChunks = !stats || stats.chunkCount > 0;
-    if (
-      mayHaveChunks &&
-      !confirm(
-        "Switching providers requires re-embedding all documents. Continue?",
-      )
-    )
-      return;
+    if (mayHaveChunks && !confirm("Switching providers requires re-embedding all documents. Continue?")) return;
     try {
       await window.api.setEmbeddingProvider(newProvider);
       setProvider(newProvider);
@@ -274,12 +253,7 @@ export function SettingsPage({
   }
 
   async function handleDisconnectNotion(): Promise<void> {
-    if (
-      !confirm(
-        "Disconnect Notion? You will need to re-authenticate to sync Notion sources.",
-      )
-    )
-      return;
+    if (!confirm("Disconnect Notion? You will need to re-authenticate to sync Notion sources.")) return;
     setDisconnectingNotion(true);
     try {
       await window.api.deleteSecret("notion_token");
@@ -292,12 +266,7 @@ export function SettingsPage({
   }
 
   async function handleDisconnectDrive(): Promise<void> {
-    if (
-      !confirm(
-        "Disconnect Google Drive? You will need to re-authenticate to sync Drive sources.",
-      )
-    )
-      return;
+    if (!confirm("Disconnect Google Drive? You will need to re-authenticate to sync Drive sources.")) return;
     setDisconnectingDrive(true);
     try {
       await window.api.deleteSecret("google_tokens");
@@ -310,12 +279,7 @@ export function SettingsPage({
   }
 
   async function handleClearAllData(): Promise<void> {
-    if (
-      !confirm(
-        "Delete all sources, documents, and settings? This cannot be undone.",
-      )
-    )
-      return;
+    if (!confirm("Delete all sources, documents, and settings? This cannot be undone.")) return;
     setClearing(true);
     try {
       await window.api.clearAllData();
@@ -346,15 +310,12 @@ export function SettingsPage({
     }
   }
 
-  // "Detected" = an engine is answering now, or a Commons-managed binary is on
+  // "Detected" = an engine is answering now, or a Catena-managed binary is on
   // disk. The Uninstall button is enabled only when something is detected, so
   // once a teardown removes everything it disables itself. `ready` also requires
   // an embedding model, which gates the Settings install flow below.
-  const ollamaDetected =
-    !!ollamaStatus &&
-    (ollamaStatus.engineUp || ollamaStatus.managedBinaryPresent);
-  const ollamaReady =
-    !!ollamaStatus && ollamaStatus.engineUp && ollamaStatus.embeddingReady;
+  const ollamaDetected = !!ollamaStatus && (ollamaStatus.engineUp || ollamaStatus.managedBinaryPresent);
+  const ollamaReady = !!ollamaStatus && ollamaStatus.engineUp && ollamaStatus.embeddingReady;
   const canUninstallOllama = ollamaDetected;
 
   return (
@@ -364,22 +325,12 @@ export function SettingsPage({
         {/* Compact light/dark toggle, moved here from a standalone Appearance
             section: a switch flanked by sun/moon icons, the active side lit. */}
         <div className="flex items-center gap-1.5">
-          <SunIcon
-            className={`size-4 ${dark ? "text-muted-foreground" : "text-foreground"}`}
-          />
-          <Switch
-            checked={dark}
-            onCheckedChange={() => onToggleTheme()}
-            aria-label="Dark theme"
-          />
-          <MoonIcon
-            className={`size-4 ${dark ? "text-foreground" : "text-muted-foreground"}`}
-          />
+          <SunIcon className={`size-4 ${dark ? "text-muted-foreground" : "text-foreground"}`} />
+          <Switch checked={dark} onCheckedChange={() => onToggleTheme()} aria-label="Dark theme" />
+          <MoonIcon className={`size-4 ${dark ? "text-foreground" : "text-muted-foreground"}`} />
         </div>
       </div>
-      <p className="text-muted-foreground text-sm mb-6">
-        Manage your embedding provider and app data.
-      </p>
+      <p className="text-muted-foreground text-sm mb-6">Manage your embedding provider and app data.</p>
 
       {loadError && (
         <ErrorBanner variant="error" className="mb-6">
@@ -390,46 +341,26 @@ export function SettingsPage({
       <div className="space-y-8">
         <div className="grid grid-cols-2 gap-4">
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Embedding Provider
-            </h2>
+            <h2 className="text-sm font-medium text-muted-foreground">Embedding Provider</h2>
             <div className="flex gap-2">
-              <Button
-                variant={provider === "cohere" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleSwitchProvider("cohere")}
-              >
-                <CohereIcon className="opacity-100" />
-                Cohere
-              </Button>
-              <Button
-                variant={provider === "ollama" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleSwitchProvider("ollama")}
-              >
+              <Button variant={provider === "ollama" ? "default" : "outline"} size="sm" onClick={() => handleSwitchProvider("ollama")}>
                 <OllamaIcon className="opacity-100" />
                 Ollama
+              </Button>
+              <Button variant={provider === "cohere" ? "default" : "outline"} size="sm" onClick={() => handleSwitchProvider("cohere")}>
+                <CohereIcon className="opacity-100" />
+                Cohere
               </Button>
             </div>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Background Sync
-            </h2>
+            <h2 className="text-sm font-medium text-muted-foreground">Background Sync</h2>
             <div className="flex gap-2">
-              <Button
-                variant={autoSyncEnabled ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleToggleAutoSync(true)}
-              >
+              <Button variant={autoSyncEnabled ? "default" : "outline"} size="sm" onClick={() => handleToggleAutoSync(true)}>
                 Enabled
               </Button>
-              <Button
-                variant={!autoSyncEnabled ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleToggleAutoSync(false)}
-              >
+              <Button variant={!autoSyncEnabled ? "default" : "outline"} size="sm" onClick={() => handleToggleAutoSync(false)}>
                 Disabled
               </Button>
             </div>
@@ -441,36 +372,19 @@ export function SettingsPage({
                   { label: "1 hr", ms: 60 * 60 * 1000 },
                   { label: "2 hr", ms: 2 * 60 * 60 * 1000 },
                 ].map((opt) => (
-                  <Button
-                    key={opt.ms}
-                    variant={
-                      autoSyncInterval === opt.ms ? "default" : "outline"
-                    }
-                    size="sm"
-                    onClick={() => handleSetSyncInterval(opt.ms)}
-                  >
+                  <Button key={opt.ms} variant={autoSyncInterval === opt.ms ? "default" : "outline"} size="sm" onClick={() => handleSetSyncInterval(opt.ms)}>
                     {opt.label}
                   </Button>
                 ))}
               </div>
             )}
-            {autoSyncEnabled && (
-              <p className="text-xs text-muted-foreground">
-                {autoSyncing
-                  ? "Syncing now…"
-                  : lastSyncedAt
-                    ? `Last synced ${formatRelativeTime(lastSyncedAt)}`
-                    : "No sync yet"}
-              </p>
-            )}
+            {autoSyncEnabled && <p className="text-xs text-muted-foreground">{autoSyncing ? "Syncing now…" : lastSyncedAt ? `Last synced ${formatRelativeTime(lastSyncedAt)}` : "No sync yet"}</p>}
           </section>
         </div>
 
         {provider === "cohere" && (
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Cohere API Key
-            </h2>
+            <h2 className="text-sm font-medium text-muted-foreground">Cohere API Key</h2>
             {hasKey ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-foreground">Key configured</span>
@@ -480,59 +394,32 @@ export function SettingsPage({
                 </Button>
               </div>
             ) : (
-              <ErrorBanner variant="warning">
-                No API key configured — search is disabled until you add one.
-              </ErrorBanner>
+              <ErrorBanner variant="warning">No API key configured — search is disabled until you add one.</ErrorBanner>
             )}
             <div className="flex gap-2">
-              <Input
-                type="password"
-                placeholder="Paste new Cohere API key"
-                value={newKey}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setNewKey(e.target.value)
-                }
-              />
-              <Button
-                size="sm"
-                onClick={handleUpdateKey}
-                loading={validating}
-                disabled={!newKey.trim()}
-              >
+              <Input type="password" placeholder="Paste new Cohere API key" value={newKey} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKey(e.target.value)} />
+              <Button size="sm" onClick={handleUpdateKey} loading={validating} disabled={!newKey.trim()}>
                 {hasKey ? "Update" : "Save"}
               </Button>
             </div>
             {keyError && <ErrorBanner variant="error">{keyError}</ErrorBanner>}
-            {keySuccess && (
-              <p className="text-sm text-success-foreground">
-                API key updated successfully.
-              </p>
-            )}
+            {keySuccess && <p className="text-sm text-success-foreground">API key updated successfully.</p>}
           </section>
         )}
 
         {provider === "ollama" && (
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Local Model
-            </h2>
+            <h2 className="text-sm font-medium text-muted-foreground">Local Model</h2>
             {ollamaStatus === null ? (
               <p className="text-sm text-muted-foreground">Checking Ollama…</p>
             ) : ollamaReady ? (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-foreground">
-                  Ollama installed
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {ollamaStatus.embeddingModels.join(", ")}
-                </span>
+                <span className="text-sm text-foreground">Ollama installed</span>
+                <span className="text-xs text-muted-foreground">{ollamaStatus.embeddingModels.join(", ")}</span>
               </div>
             ) : (
               <>
-                <ErrorBanner variant="warning">
-                  Ollama isn&apos;t set up yet — search is disabled until you
-                  install it.
-                </ErrorBanner>
+                <ErrorBanner variant="warning">Ollama isn&apos;t set up yet — search is disabled until you install it.</ErrorBanner>
                 {/* Same one-click flow as the onboarding wizard. On success, refresh
                     so the section flips to "installed" and the Danger Zone button enables. */}
                 <OllamaInstallPanel onInstalled={refresh} />
@@ -560,19 +447,14 @@ export function SettingsPage({
                 <p className="text-xs text-muted-foreground">Chunks</p>
               </div>
               <div className="rounded-lg border border-border bg-card p-3">
-                <p className="text-2xl font-semibold">
-                  {formatBytes(stats.dbSizeBytes)}
-                </p>
+                <p className="text-2xl font-semibold">{formatBytes(stats.dbSizeBytes)}</p>
                 <p className="text-xs text-muted-foreground">Database size</p>
               </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
               {Array.from({ length: 4 }, (_, i) => (
-                <div
-                  key={i}
-                  className="rounded-lg border border-border bg-card p-3 space-y-1"
-                >
+                <div key={i} className="rounded-lg border border-border bg-card p-3 space-y-1">
                   <div className="h-7 w-12 rounded bg-muted animate-pulse" />
                   <div className="h-3 w-16 rounded bg-muted animate-pulse" />
                 </div>
@@ -588,24 +470,12 @@ export function SettingsPage({
 
           <div className="flex items-start justify-between gap-6 rounded-lg border border-border bg-card p-3">
             <div className="space-y-0.5">
-              <label
-                htmlFor="telemetry-toggle"
-                className="text-sm font-medium text-foreground"
-              >
+              <label htmlFor="telemetry-toggle" className="text-sm font-medium text-foreground">
                 Anonymous usage analytics
               </label>
-              <p className="text-xs text-muted-foreground">
-                Counts of things like searches run and sources added, tied to a
-                random device ID. Never your queries, your documents, or their
-                titles.
-              </p>
+              <p className="text-xs text-muted-foreground">Counts of things like searches run and sources added, tied to a random device ID. Never your queries, your documents, or their titles.</p>
             </div>
-            <Switch
-              id="telemetry-toggle"
-              checked={telemetryEnabled}
-              onCheckedChange={handleToggleTelemetry}
-              className="mt-0.5"
-            />
+            <Switch id="telemetry-toggle" checked={telemetryEnabled} onCheckedChange={handleToggleTelemetry} className="mt-0.5" />
           </div>
 
           <ConfirmDialog
@@ -616,68 +486,41 @@ export function SettingsPage({
             cancelLabel="Keep it on"
             confirmVariant="outline"
             cancelVariant="default"
-            onConfirm={() => void applyTelemetry(false)}
-          >
+            onConfirm={() => void applyTelemetry(false)}>
+            <p>Catena is built by one developer. These anonymous counts are how I see what people actually use, catch crashes, and decide what to fix next — without them I&apos;m working blind.</p>
             <p>
-              Commons is built by one developer. These anonymous counts are how
-              I see what people actually use, catch crashes, and decide what to
-              fix next — without them I&apos;m working blind.
-            </p>
-            <p>
-              It stays completely anonymous: just tallies like how many searches
-              were run or sources added, tied to a random device ID.{" "}
-              <span className="font-medium text-foreground">
-                Your queries, your documents, and their titles are never sent or
-                tracked
-              </span>{" "}
-              — that never changes whether this is on or off.
+              It stays completely anonymous: just tallies like how many searches were run or sources added, tied to a random device ID.{" "}
+              <span className="font-medium text-foreground">Your queries, your documents, and their titles are never sent or tracked</span> — that never changes whether this is on or off.
             </p>
           </ConfirmDialog>
 
           {/*
-            Commons is local-first, not local-only, and the difference is not
+            Catena is local-first, not local-only, and the difference is not
             self-evident from the marketing. Someone deciding whether to point
-            this at their club's documents deserves to read the actual answer on
+            this at their organization's documents deserves to read the actual answer on
             the settings page, not infer it.
           */}
           <div className="rounded-lg border border-border bg-card p-3 space-y-1">
-            <p className="text-sm font-medium text-foreground">
-              What leaves your device
-            </p>
+            <p className="text-sm font-medium text-foreground">What leaves your device</p>
             {provider === "cohere" ? (
               <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
                 <li>
-                  <span className="text-foreground">Your document text</span> is
-                  sent to Cohere to be embedded — every chunk of every document
-                  you sync, once per sync.
+                  <span className="text-foreground">Your document text</span> is sent to Cohere to be embedded — every chunk of every document you sync, once per sync.
                 </li>
                 <li>
-                  <span className="text-foreground">Your search queries</span>{" "}
-                  are sent to Cohere to be rewritten, and the top matching
-                  chunks are sent back for reranking.
+                  <span className="text-foreground">Your search queries</span> are sent to Cohere to be rewritten, and the top matching chunks are sent back for reranking.
                 </li>
                 <li>
-                  When you{" "}
-                  <span className="text-foreground">generate an answer</span>,
-                  your question and the top matching chunks are sent to Cohere
-                  to write it.
+                  When you <span className="text-foreground">generate an answer</span>, your question and the top matching chunks are sent to Cohere to write it.
                 </li>
-                <li>
-                  Your documents and embeddings are stored only on this device.
-                  Cohere does not keep them.
-                </li>
+                <li>Your documents and embeddings are stored only on this device. Cohere does not keep them.</li>
               </ul>
             ) : (
               <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
                 <li>
-                  <span className="text-foreground">Nothing.</span> Ollama runs
-                  on this machine, so your documents, queries, and generated
-                  answers never leave it.
+                  <span className="text-foreground">Nothing.</span> Ollama runs on this machine, so your documents, queries, and generated answers never leave it.
                 </li>
-                <li>
-                  Syncing still fetches your documents from Notion or Google
-                  Drive, which is how they get here in the first place.
-                </li>
+                <li>Syncing still fetches your documents from Notion or Google Drive, which is how they get here in the first place.</li>
               </ul>
             )}
             <Button
@@ -685,11 +528,8 @@ export function SettingsPage({
               size="xs"
               className="px-0"
               onClick={() => {
-                void openExternal(
-                  "https://github.com/MatthewBlam/Commons/blob/main/PRIVACY.md",
-                );
-              }}
-            >
+                void openExternal("https://github.com/MatthewBlam/Catena/blob/main/PRIVACY.md");
+              }}>
               Read the full privacy policy
             </Button>
           </div>
@@ -698,43 +538,18 @@ export function SettingsPage({
         <div className="border-t border-border" />
 
         <section className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Danger Zone
-          </h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Danger Zone</h2>
           <div className="flex gap-2">
-            <Button
-              variant="destructive-outline"
-              size="sm"
-              onClick={handleClearAllData}
-              loading={clearing}
-            >
+            <Button variant="destructive-outline" size="sm" onClick={handleClearAllData} loading={clearing}>
               Clear all data
             </Button>
-            <Button
-              variant="destructive-outline"
-              size="sm"
-              onClick={handleDisconnectNotion}
-              loading={disconnectingNotion}
-              disabled={!hasNotion}
-            >
+            <Button variant="destructive-outline" size="sm" onClick={handleDisconnectNotion} loading={disconnectingNotion} disabled={!hasNotion}>
               Disconnect Notion
             </Button>
-            <Button
-              variant="destructive-outline"
-              size="sm"
-              onClick={handleDisconnectDrive}
-              loading={disconnectingDrive}
-              disabled={!hasDrive}
-            >
+            <Button variant="destructive-outline" size="sm" onClick={handleDisconnectDrive} loading={disconnectingDrive} disabled={!hasDrive}>
               Disconnect Google Drive
             </Button>
-            <Button
-              variant="destructive-outline"
-              size="sm"
-              onClick={() => setShowUninstallConfirm(true)}
-              loading={uninstalling}
-              disabled={!canUninstallOllama}
-            >
+            <Button variant="destructive-outline" size="sm" onClick={() => setShowUninstallConfirm(true)} loading={uninstalling} disabled={!canUninstallOllama}>
               Uninstall Ollama
             </Button>
           </div>
@@ -746,26 +561,13 @@ export function SettingsPage({
             confirmLabel="Uninstall"
             cancelLabel="Cancel"
             confirmVariant="destructive"
-            onConfirm={() => void handleUninstallOllama()}
-          >
+            onConfirm={() => void handleUninstallOllama()}>
             <p>
-              This removes the local Ollama engine Commons downloaded and the
-              models it pulled ({" "}
-              <span className="font-medium text-foreground">
-                freeing up around 2&nbsp;GB
-              </span>{" "}
-              ). Your synced documents stay on this device.
+              This removes the local Ollama engine Catena downloaded and the models it pulled ( <span className="font-medium text-foreground">freeing up around 2&nbsp;GB</span> ). Your synced
+              documents stay on this device.
             </p>
-            {provider === "ollama" && (
-              <p>
-                Ollama is your current search provider, so search will be
-                disabled until you switch to Cohere or set up Ollama again.
-              </p>
-            )}
-            <p>
-              A separate copy of Ollama you installed yourself is left
-              untouched.
-            </p>
+            {provider === "ollama" && <p>Ollama is your current search provider, so search will be disabled until you switch to Cohere or set up Ollama again.</p>}
+            <p>A separate copy of Ollama you installed yourself is left untouched.</p>
           </ConfirmDialog>
         </section>
       </div>

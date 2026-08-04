@@ -31,6 +31,7 @@ const RESULTS: SearchResult[] = [
 beforeEach(() => {
   window.api = {
     openExternal: vi.fn(() => Promise.resolve()),
+    reportCitationOpened: vi.fn(() => Promise.resolve()),
   } as unknown as typeof window.api;
 });
 
@@ -85,6 +86,27 @@ describe("AnswerPanel", () => {
     const marker = screen.getByRole("button", { name: "Open source 1" });
     expect(marker).toHaveTextContent("[1]");
     fireEvent.click(marker);
+    expect(window.api.openExternal).toHaveBeenCalledWith(
+      "https://example.com/zero",
+    );
+    // Reported by rank only — the source itself never leaves the machine.
+    expect(window.api.reportCitationOpened).toHaveBeenCalledWith(1);
+  });
+
+  it("still opens the source when citation reporting is unavailable", () => {
+    window.api = {
+      openExternal: vi.fn(() => Promise.resolve()),
+    } as unknown as typeof window.api;
+    const citations: AnswerCitation[] = [{ start: 0, end: 7, chunkId: "c0" }];
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="done"
+        text="Emperor penguins are tall."
+        citations={citations}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open source 1" }));
     expect(window.api.openExternal).toHaveBeenCalledWith(
       "https://example.com/zero",
     );

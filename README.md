@@ -1,7 +1,7 @@
-# Commons
+# Catena
 
-Search your club's docs — a local-first RAG desktop app for student
-organizations. Connect Notion pages and Google Drive files, and Commons indexes
+Search your organization's docs — a local-first RAG desktop app for student
+organizations. Connect Notion pages and Google Drive files, and Catena indexes
 them on your machine so you can search across everything in one place, by meaning
 or by keyword.
 
@@ -35,8 +35,8 @@ you connect.
 ## Setup
 
 ```sh
-git clone https://github.com/MatthewBlam/Commons.git
-cd Commons
+git clone https://github.com/MatthewBlam/Catena.git
+cd Catena
 pnpm install          # postinstall rebuilds better-sqlite3 for Electron
 cp .env.example .env  # then fill in the values below
 pnpm dev
@@ -66,7 +66,7 @@ never inlined and never sent to the renderer (the app checks _existence_ with
 Notion's token endpoint requires HTTP Basic auth built from the integration's
 **client secret** and has no PKCE-only public-client mode. A desktop app cannot
 hold a secret (anything in the bundle is recoverable with `strings`), so the
-exchange happens in a tiny Cloudflare Worker instead — Commons keeps only the
+exchange happens in a tiny Cloudflare Worker instead — Catena keeps only the
 PKCE flow and the public `client_id`.
 
 Deploy it from [`worker/`](worker/README.md):

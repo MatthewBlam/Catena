@@ -5,10 +5,10 @@ Run through this checklist before each release. Start from a clean state (`pnpm 
 To fully reset the app (delete the database and start from onboarding):
 
 ```sh
-rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/commons.db"
+rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/catena.db"
 # or manually:
-# macOS: rm ~/Library/Application\ Support/Commons/commons.db
-# Windows: del %APPDATA%\Commons\commons.db
+# macOS: rm ~/Library/Application\ Support/Catena/catena.db
+# Windows: del %APPDATA%\Catena\catena.db
 ```
 
 ---
@@ -18,7 +18,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 ### Welcome Step
 
 - [ ] App opens to onboarding wizard (not the main app)
-- [ ] Title "Welcome to Commons" and description are visible
+- [ ] Title "Welcome to Catena" and description are visible
 - [ ] "Get started" button advances to provider step
 
 ### Provider Step -- Cohere
@@ -117,7 +117,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 
 - [ ] Clicking "Connect Notion" opens the Notion OAuth page in the default browser
 - [ ] Completing OAuth in the browser returns focus to the app
-- [ ] Browser shows "Connected to Notion! You can close this tab and return to Commons."
+- [ ] Browser shows "Connected to Notion! You can close this tab and return to Catena."
 - [ ] App transitions to the Notion page picker (page list)
 
 ### Notion Page Picker
@@ -136,7 +136,7 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/co
 
 - [ ] Clicking "Connect Google Drive" opens the Google OAuth page in the default browser
 - [ ] Completing OAuth in the browser returns focus to the app
-- [ ] Browser shows "Connected to Google Drive! You can close this tab and return to Commons."
+- [ ] Browser shows "Connected to Google Drive! You can close this tab and return to Catena."
 - [ ] App shows the Drive folder picker with the authenticated email
 
 ### Drive Folder Picker

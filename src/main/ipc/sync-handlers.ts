@@ -389,7 +389,7 @@ export async function runManagedSync(
     thrown: undefined,
   };
 
-  track("commons_sync_started", {
+  track("catena_sync_started", {
     source_provider: source.provider,
     trigger,
   });
@@ -426,7 +426,7 @@ export async function runManagedSync(
         controller.signal.aborted,
         controller.signal.reason,
       );
-      track("commons_sync_completed", {
+      track("catena_sync_completed", {
         source_provider: source.provider,
         trigger,
         duration_ms: Date.now() - startMs,

@@ -48,10 +48,10 @@ async function runManaged(
   }
   const controller = new AbortController();
   activeOp = controller;
-  track("commons_ollama_setup_started", { platform: process.platform, label });
+  track("catena_ollama_setup_started", { platform: process.platform, label });
   try {
     await work(publishOllamaProgress, controller.signal);
-    track("commons_ollama_setup_completed", {
+    track("catena_ollama_setup_completed", {
       platform: process.platform,
       label,
     });
@@ -79,7 +79,7 @@ export function registerOllamaHandlers(): void {
     activeOp?.abort();
   });
 
-  // Complete teardown of the managed engine + Commons-pulled models. Shares the
+  // Complete teardown of the managed engine + Catena-pulled models. Shares the
   // single-flight guard so it can't race an in-flight download/pull.
   ipcMain.handle("ollama:uninstall", async () => {
     if (activeOp) {
@@ -87,10 +87,10 @@ export function registerOllamaHandlers(): void {
     }
     const controller = new AbortController();
     activeOp = controller;
-    track("commons_ollama_uninstall_started", { platform: process.platform });
+    track("catena_ollama_uninstall_started", { platform: process.platform });
     try {
       await uninstallOllama(controller.signal);
-      track("commons_ollama_uninstall_completed", {
+      track("catena_ollama_uninstall_completed", {
         platform: process.platform,
       });
     } finally {
@@ -108,7 +108,7 @@ export function registerOllamaHandlers(): void {
       throw new Error(`Invalid Ollama model: ${model}`);
     }
     upsertSetting(getDb(), "ollama_model", model);
-    track("commons_ollama_model_changed", { kind: "embedding" });
+    track("catena_ollama_model_changed", { kind: "embedding" });
   });
 
   ipcMain.handle("settings:set-ollama-chat-model", (_, model: string) => {
@@ -116,6 +116,6 @@ export function registerOllamaHandlers(): void {
       throw new Error(`Invalid Ollama chat model: ${model}`);
     }
     upsertSetting(getDb(), "ollama_chat_model", model);
-    track("commons_ollama_model_changed", { kind: "chat" });
+    track("catena_ollama_model_changed", { kind: "chat" });
   });
 }

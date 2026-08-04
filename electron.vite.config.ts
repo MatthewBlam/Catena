@@ -16,7 +16,7 @@ dotenvConfig();
  */
 function devRelaxCsp(): Plugin {
   return {
-    name: "commons-dev-relax-csp",
+    name: "catena-dev-relax-csp",
     apply: "serve",
     transformIndexHtml(html) {
       return html.replace("connect-src 'none'", "connect-src 'self' ws: wss:");

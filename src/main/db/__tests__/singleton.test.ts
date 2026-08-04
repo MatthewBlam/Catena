@@ -28,8 +28,8 @@ function quarantinedFiles(): string[] {
 }
 
 beforeEach(() => {
-  h.userData = mkdtempSync(join(tmpdir(), "commons-singleton-"));
-  dbPath = join(h.userData, "commons.db");
+  h.userData = mkdtempSync(join(tmpdir(), "catena-singleton-"));
+  dbPath = join(h.userData, "catena.db");
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -141,7 +141,7 @@ describe("corruption recovery", () => {
     seed.close();
 
     // Downgrading the app must not cost the user their corpus.
-    expect(() => getDb()).toThrow(/newer version of Commons/);
+    expect(() => getDb()).toThrow(/newer version of Catena/);
     expect(quarantinedFiles()).toEqual([]);
     expect(existsSync(dbPath)).toBe(true);
   });

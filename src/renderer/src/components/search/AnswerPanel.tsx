@@ -2,6 +2,7 @@ import { SparklesIcon, SquareIcon, RotateCcwIcon } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
 import { OllamaChatModelButton } from "@renderer/components/setup/OllamaChatModelButton";
 import { openExternal } from "@renderer/lib/openExternal";
+import { reportCitationOpened } from "@renderer/lib/telemetry";
 import type { AnswerCitation, SearchResult } from "../../../../shared/types";
 
 export type AnswerStatus = "idle" | "streaming" | "done" | "error";
@@ -35,7 +36,12 @@ function CitationMarker({
   return (
     <button
       type="button"
-      onClick={() => void openExternal(url)}
+      onClick={() => {
+        // Following a citation is the closest thing to a signal that the answer
+        // was worth checking; only the rank is reported, never the source.
+        reportCitationOpened(n);
+        void openExternal(url);
+      }}
       aria-label={`Open source ${n}`}
       className="ml-0.5 cursor-pointer align-super text-[0.7em] text-primary hover:underline"
     >

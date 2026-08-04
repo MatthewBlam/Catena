@@ -3,9 +3,9 @@ import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-nati
 
 const config: ForgeConfig = {
   packagerConfig: {
-    name: "Commons",
-    executableName: "Commons",
-    appBundleId: "com.commons.app",
+    name: "Catena",
+    executableName: "Catena",
+    appBundleId: "com.catena.app",
     icon: "./build/icon",
     prune: true,
     asar: {
@@ -50,7 +50,7 @@ const config: ForgeConfig = {
     {
       name: "@electron-forge/maker-squirrel",
       config: {
-        name: "commons",
+        name: "catena",
         setupIcon: "./build/icon.ico",
       },
     },

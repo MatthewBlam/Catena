@@ -21,7 +21,7 @@ import { downloadWithProgress, extractArchive } from "../download";
 let tmp: string;
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), "commons-dl-"));
+  tmp = mkdtempSync(join(tmpdir(), "catena-dl-"));
   h.execFile.mockReset();
   h.execFile.mockImplementation((_cmd, _args, cb) => cb(null, "", ""));
 });

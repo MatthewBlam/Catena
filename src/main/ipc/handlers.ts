@@ -25,7 +25,12 @@ import {
   updateRecentSearchAnswer,
 } from "../db/database";
 import { search } from "../search/searcher";
-import { generateAnswer, type AnswerDoc } from "../search/answerer";
+import {
+  generateAnswer,
+  COHERE_ANSWER_MODEL,
+  DEFAULT_OLLAMA_CHAT_MODEL,
+  type AnswerDoc,
+} from "../search/answerer";
 import { startNotionOAuth, cancelNotionOAuth } from "../auth/notion-oauth";
 import { listNotionItems } from "../connectors/notion";
 import {
@@ -37,7 +42,11 @@ import {
 import { listDriveItems } from "../connectors/drive";
 import { getEmbeddingModelName } from "../search/embedder";
 import type { EmbedConfig } from "../search/embedder";
-import type { SourceConfig, AnswerRequest } from "../../shared/types";
+import type {
+  SourceConfig,
+  AnswerRequest,
+  AnswerCancelReason,
+} from "../../shared/types";
 import {
   cancelSync,
   cancelAllSyncs,
@@ -78,12 +87,43 @@ function isSafeUrl(url: string): boolean {
 const activeSearches = new Map<number, AbortController>();
 
 /**
+ * One in-flight answer generation: its abort handle plus the timings and shape
+ * telemetry needs. The cancel handler reports on a generation it did not start,
+ * so what would otherwise be locals of the generate handler live here instead.
+ */
+interface AnswerRun {
+  controller: AbortController;
+  startMs: number;
+  /** Ms from request to the first streamed token — the *perceived* latency, unlike
+   *  the end-to-end duration. Null while nothing has streamed yet. */
+  firstTokenMs: number | null;
+  /** Characters streamed so far, so a cancel can say how much the user had seen. */
+  streamedChars: number;
+  /** The chat model actually used, resolved once at request time. */
+  model: string;
+  provider: string;
+  docCount: number;
+  retry: boolean;
+}
+
+/**
  * The in-flight answer generation per renderer, mirroring `activeSearches`. A new
  * generation (or a search/restore that supersedes one) aborts the prior. Kept
  * separate from `activeSearches` so cancelling an answer never touches a search
  * and vice versa.
  */
-const activeAnswers = new Map<number, AbortController>();
+const activeAnswers = new Map<number, AnswerRun>();
+
+/** The chat model an answer will be generated with, for the current provider. */
+function resolveAnswerModel(
+  db: ReturnType<typeof getDb>,
+  provider: string,
+): string {
+  if (provider === "cohere") return COHERE_ANSWER_MODEL;
+  return (
+    (getSetting(db, "ollama_chat_model") as string) || DEFAULT_OLLAMA_CHAT_MODEL
+  );
+}
 
 export function registerIpcHandlers(): void {
   ipcMain.handle("secrets:save", (_, key: string, value: string) => {
@@ -152,7 +192,7 @@ export function registerIpcHandlers(): void {
       throw new Error(`Invalid embedding provider: ${provider}`);
     }
     upsertSetting(getDb(), "embedding_provider", provider);
-    track("commons_embedding_provider_changed", { provider });
+    track("catena_embedding_provider_changed", { provider });
   });
 
   ipcMain.handle("app:open-external", async (_, url: string) => {
@@ -233,7 +273,7 @@ export function registerIpcHandlers(): void {
       const response = await search(db, query, embedConfig, {
         signal: controller.signal,
       });
-      track("commons_search_executed", {
+      track("catena_search_executed", {
         result_count: response.results.length,
         rerank_failed: response.rerankFailed,
         query_rewritten: !!response.rewrittenQuery,
@@ -274,13 +314,36 @@ export function registerIpcHandlers(): void {
     const senderId = event.sender.id;
 
     // A new generation supersedes the old one, per renderer (see activeSearches).
-    activeAnswers.get(senderId)?.abort();
+    // No cancellation event for the one it replaced: the app abandoned that work,
+    // the user did not (see the `answer:cancel` handler).
+    activeAnswers.get(senderId)?.controller.abort();
     const controller = new AbortController();
-    activeAnswers.set(senderId, controller);
 
     const db = getDb();
     const embedConfig = buildEmbedConfig(db);
+    const model = resolveAnswerModel(db, embedConfig.provider);
     const startMs = Date.now();
+    const run: AnswerRun = {
+      controller,
+      startMs,
+      firstTokenMs: null,
+      streamedChars: 0,
+      model,
+      provider: embedConfig.provider,
+      docCount: request.docs.length,
+      retry: request.retry === true,
+    };
+    activeAnswers.set(senderId, run);
+
+    // Fired before the work, not after it, so the funnel has a denominator: every
+    // completion event has a matching request, and requests without one are the
+    // generations that were stopped, superseded, or lost to a crash.
+    track("catena_answer_requested", {
+      embedding_provider: run.provider,
+      answer_model: run.model,
+      doc_count: run.docCount,
+      retry: run.retry,
+    });
 
     try {
       // Re-fetch authoritative chunk text + heading by id; titles ride along on
@@ -316,6 +379,9 @@ export function registerIpcHandlers(): void {
         // progress broadcasts because a sync is global; an answer is not.) The
         // window can tear down mid-stream, so guard the send.
         onDelta: (delta) => {
+          if (run.firstTokenMs === null)
+            run.firstTokenMs = Date.now() - startMs;
+          run.streamedChars += delta.length;
           if (!event.sender.isDestroyed()) {
             event.sender.send("answer:delta", {
               requestId: request.requestId,
@@ -323,8 +389,9 @@ export function registerIpcHandlers(): void {
             });
           }
         },
-        ollamaChatModel:
-          (getSetting(db, "ollama_chat_model") as string) || undefined,
+        // Resolved above so telemetry can name the model; the Cohere path has its
+        // own constant and ignores this, so only pass it where it means something.
+        ollamaChatModel: embedConfig.provider === "ollama" ? model : undefined,
       });
 
       // Persist only a real, completed answer: never a cancelled one (the user
@@ -337,29 +404,73 @@ export function registerIpcHandlers(): void {
       }
 
       // No event for a cancelled generation — like a superseded search, it never
-      // really ran. Never the query or answer text, only shape.
+      // really ran, and `answer:cancel` reports the user-initiated case itself.
+      // Never the query or answer text, only shape.
       if (!response.cancelled) {
-        track("commons_answer_generated", {
-          embedding_provider: embedConfig.provider,
+        track("catena_answer_generated", {
+          embedding_provider: run.provider,
+          answer_model: run.model,
           duration_ms: Date.now() - startMs,
+          // Time to the first streamed token — what the user experiences as the
+          // wait. Null when nothing ever streamed (every failure path).
+          first_token_ms: run.firstTokenMs,
           answer_chars: response.text.length,
           citation_count: response.citations.length,
           error_kind: response.errorKind ?? null,
+          failure_reason: response.failureReason ?? null,
+          retry: run.retry,
+          // Chunks the renderer asked to ground on vs. what survived the re-fetch.
+          // A non-zero drop means results on screen were deleted since the search,
+          // so the answer is grounded on less than the user is looking at.
+          doc_count: run.docCount,
+          docs_dropped: run.docCount - docs.length,
         });
       }
 
       return response;
     } finally {
       // Only if we still own the entry — a superseding generation has already
-      // installed its own controller, which must stay cancellable.
-      if (activeAnswers.get(senderId) === controller) {
+      // installed its own run, which must stay cancellable.
+      if (activeAnswers.get(senderId) === run) {
         activeAnswers.delete(senderId);
       }
     }
   });
 
-  ipcMain.handle("answer:cancel", (event) => {
-    activeAnswers.get(event.sender.id)?.abort();
+  ipcMain.handle(
+    "answer:cancel",
+    (event, reason: AnswerCancelReason = "superseded") => {
+      const run = activeAnswers.get(event.sender.id);
+      if (!run) return;
+      run.controller.abort();
+
+      // Only a user pressing Stop is worth an event; the app superseding its own
+      // work is not a user action (see AnswerCancelReason). Dropping the entry
+      // here also makes this idempotent — a second cancel finds nothing to report.
+      if (reason === "user_stop") {
+        activeAnswers.delete(event.sender.id);
+        track("catena_answer_cancelled", {
+          embedding_provider: run.provider,
+          answer_model: run.model,
+          doc_count: run.docCount,
+          retry: run.retry,
+          elapsed_ms: Date.now() - run.startMs,
+          first_token_ms: run.firstTokenMs,
+          streamed_chars: run.streamedChars,
+          // Stopped before ever seeing a token vs. mid-answer — one is impatience
+          // with the wait, the other a judgement on the answer itself.
+          streamed: run.firstTokenMs !== null,
+        });
+      }
+    },
+  );
+
+  // A narrow channel rather than a general "track anything" bridge: the renderer
+  // can report this one interaction, and cannot invent events or properties.
+  // Position is the citation's 1-based rank in the result list — no title, no URL.
+  ipcMain.handle("answer:citation-opened", (_, position: number) => {
+    if (!Number.isInteger(position) || position < 1) return;
+    track("catena_answer_citation_opened", { position });
   });
 
   ipcMain.handle("recents:list", () => {
@@ -429,7 +540,7 @@ export function registerIpcHandlers(): void {
       });
     }
 
-    track("commons_source_added", { source_provider: provider });
+    track("catena_source_added", { source_provider: provider });
     broadcastSourcesChanged();
 
     // Read it back rather than reconstructing it: the row carries sync-state
@@ -447,14 +558,14 @@ export function registerIpcHandlers(): void {
     deleteSource(db, id);
     broadcastSourcesChanged();
     if (source) {
-      track("commons_source_removed", { source_provider: source.provider });
+      track("catena_source_removed", { source_provider: source.provider });
     }
   });
 
   ipcMain.handle("app:storage-stats", async () => {
     const db = getDb();
     const stats = getStorageStats(db);
-    const dbPath = join(app.getPath("userData"), "commons.db");
+    const dbPath = join(app.getPath("userData"), "catena.db");
     let dbSizeBytes = 0;
     try {
       dbSizeBytes = (await stat(dbPath)).size;
@@ -465,7 +576,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("app:clear-all-data", async () => {
-    track("commons_data_cleared");
+    track("catena_data_cleared");
 
     // Order matters. `cancelAllSyncs` only waits for the syncs that are running
     // *right now*, and the scheduler works through its sources one at a time —
@@ -533,7 +644,7 @@ export function registerIpcHandlers(): void {
     "settings:set-auto-sync-enabled",
     async (_, enabled: boolean) => {
       await syncScheduler.setEnabled(enabled);
-      track("commons_auto_sync_toggled", { enabled });
+      track("catena_auto_sync_toggled", { enabled });
     },
   );
 

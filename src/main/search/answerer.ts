@@ -1,5 +1,9 @@
 import type { EmbedConfig } from "./embedder";
-import type { AnswerCitation, AnswerResponse } from "../../shared/types";
+import type {
+  AnswerCitation,
+  AnswerFailureReason,
+  AnswerResponse,
+} from "../../shared/types";
 
 /** One retrieved source the answer is grounded on. `text` is the full chunk body. */
 export interface AnswerDoc {
@@ -30,7 +34,7 @@ interface GenerateOptions {
 // is the current Command R snapshot — it supports v2 chat with `documents` +
 // citations (what grounded answers rely on) and is far cheaper than the
 // flagship Command A while staying strong at RAG extraction.
-const COHERE_ANSWER_MODEL = "command-r-08-2024";
+export const COHERE_ANSWER_MODEL = "command-r-08-2024";
 export const DEFAULT_OLLAMA_CHAT_MODEL = "llama3.2";
 
 /** Per-source cap sent to the model. Cohere recommends ≤300 words per snippet. */
@@ -62,8 +66,29 @@ function withTimeout(signal?: AbortSignal): AbortSignal {
   return AbortSignal.any(signals);
 }
 
-function failed(error = FAILED_MESSAGE): AnswerResponse {
-  return { text: "", citations: [], errorKind: "failed", error };
+function failed(
+  reason: AnswerFailureReason,
+  error = FAILED_MESSAGE,
+): AnswerResponse {
+  return {
+    text: "",
+    citations: [],
+    errorKind: "failed",
+    error,
+    failureReason: reason,
+  };
+}
+
+/**
+ * The diagnosis for a non-OK provider response, keyed by status. Paired with
+ * `cohereChatErrorMessage` below: same statuses, one mapping for the human and
+ * one for the aggregate.
+ */
+function httpFailureReason(status: number): AnswerFailureReason {
+  if (status === 401 || status === 403) return "unauthorized";
+  if (status === 429) return "rate_limited";
+  if (status === 404) return "model_not_found";
+  return "provider_error";
 }
 
 /**
@@ -201,9 +226,12 @@ async function generateWithCohere(
         await readBody(res)
       ).slice(0, 500)}`,
     );
-    return failed(cohereChatErrorMessage(res.status));
+    return failed(
+      httpFailureReason(res.status),
+      cohereChatErrorMessage(res.status),
+    );
   }
-  if (!res.body) return failed();
+  if (!res.body) return failed("provider_error");
 
   let text = "";
   const citations: AnswerCitation[] = [];
@@ -290,6 +318,7 @@ async function generateWithOllama(
       citations: [],
       errorKind: "no_model",
       error: `Install a chat model in Ollama (e.g. \`ollama pull ${model}\`) to generate answers.`,
+      failureReason: "no_chat_model",
     };
   }
 
@@ -310,7 +339,7 @@ async function generateWithOllama(
     signal,
   });
 
-  if (!res.ok || !res.body) return failed();
+  if (!res.ok || !res.body) return failed("provider_error");
 
   let text = "";
   await forEachLine(res.body, (line) => {
@@ -350,12 +379,12 @@ export async function generateAnswer(
   embedConfig: EmbedConfig,
   opts: GenerateOptions,
 ): Promise<AnswerResponse> {
-  if (docs.length === 0) return failed(EMPTY_MESSAGE);
+  if (docs.length === 0) return failed("no_docs", EMPTY_MESSAGE);
 
   try {
     let response: AnswerResponse;
     if (embedConfig.provider === "cohere") {
-      if (!embedConfig.apiKey) return failed();
+      if (!embedConfig.apiKey) return failed("no_api_key");
       response = await generateWithCohere(
         query,
         docs,
@@ -371,7 +400,7 @@ export async function generateAnswer(
     // there is nothing to show or persist. A degraded (no_model) response already
     // carries its own message and is returned untouched.
     if (!response.errorKind && response.text.trim() === "") {
-      return failed(EMPTY_MESSAGE);
+      return failed("empty_answer", EMPTY_MESSAGE);
     }
     return response;
   } catch (err) {
@@ -384,8 +413,8 @@ export async function generateAnswer(
       return { text: "", citations: [], cancelled: true };
     }
     if (err instanceof Error && err.name === "TimeoutError") {
-      return failed();
+      return failed("timeout");
     }
-    return failed();
+    return failed("unknown");
   }
 }

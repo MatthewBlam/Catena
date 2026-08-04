@@ -172,7 +172,7 @@ export async function startNotionOAuth(
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(
-          "<h1>Connected to Notion!</h1><p>You can close this tab and return to Commons.</p>",
+          "<h1>Connected to Notion!</h1><p>You can close this tab and return to Catena.</p>",
         );
 
         safeResolve({

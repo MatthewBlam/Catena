@@ -6,7 +6,7 @@ const ENV: Env = {
   NOTION_CLIENT_SECRET: "client-secret",
 };
 
-const URL_BASE = "https://commons-notion-auth.example.workers.dev";
+const URL_BASE = "https://catena-notion-auth.example.workers.dev";
 
 function post(body: unknown, path = "/notion/token"): Request {
   return new Request(`${URL_BASE}${path}`, {

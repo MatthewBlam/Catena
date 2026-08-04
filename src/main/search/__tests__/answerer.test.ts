@@ -196,7 +196,67 @@ describe("generateAnswer — Cohere", () => {
       { onDelta: noop },
     );
     expect(res.errorKind).toBe("failed");
+    expect(res.failureReason).toBe("no_api_key");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("generateAnswer — failure reasons", () => {
+  // Every one of these renders as the same "failed" banner; only the reason
+  // tells a bad key apart from a rate limit or a retired model after the fact.
+  it.each([
+    [401, "unauthorized"],
+    [403, "unauthorized"],
+    [429, "rate_limited"],
+    [404, "model_not_found"],
+    [500, "provider_error"],
+  ])("maps HTTP %i to %s", async (status, reason) => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status,
+      statusText: "",
+      body: null,
+      text: async () => "",
+    } as Response);
+    const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
+    expect(res.failureReason).toBe(reason);
+  });
+
+  it("distinguishes an empty answer from a provider failure", async () => {
+    fetchMock.mockResolvedValueOnce(streamResponse(["data: [DONE]\n\n"]));
+    const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
+    expect(res.failureReason).toBe("empty_answer");
+  });
+
+  it("reports having had nothing to ground on", async () => {
+    const res = await generateAnswer("q", [], COHERE, { onDelta: noop });
+    expect(res.failureReason).toBe("no_docs");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing Ollama chat model as a setup gap, not a failure", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ models: [{ name: "nomic-embed-text" }] }),
+    } as Response);
+    const res = await generateAnswer(
+      "q",
+      DOCS,
+      { provider: "ollama" },
+      { onDelta: noop },
+    );
+    expect(res.errorKind).toBe("no_model");
+    expect(res.failureReason).toBe("no_chat_model");
+  });
+
+  it("carries no reason on success", async () => {
+    fetchMock.mockResolvedValueOnce(
+      streamResponse([
+        sse("content-delta", { message: { content: { text: "Fine." } } }),
+      ]),
+    );
+    const res = await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
+    expect(res.failureReason).toBeUndefined();
   });
 });
 

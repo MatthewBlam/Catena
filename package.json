@@ -1,18 +1,18 @@
 {
-  "name": "Commons",
+  "name": "Catena",
   "version": "0.1.0",
-  "description": "Search your club's docs — local-first RAG for student organizations",
+  "description": "Search your organization's docs — local-first RAG for student organizations",
   "type": "module",
   "main": "./dist/main/index.js",
   "author": "Matthew Blam",
   "license": "MIT",
-  "homepage": "https://github.com/MatthewBlam/Commons#readme",
+  "homepage": "https://github.com/MatthewBlam/Catena#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MatthewBlam/Commons.git"
+    "url": "git+https://github.com/MatthewBlam/Catena.git"
   },
   "bugs": {
-    "url": "https://github.com/MatthewBlam/Commons/issues"
+    "url": "https://github.com/MatthewBlam/Catena/issues"
   },
   "packageManager": "pnpm@11.5.2",
   "scripts": {

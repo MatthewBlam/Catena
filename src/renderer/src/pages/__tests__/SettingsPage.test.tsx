@@ -251,7 +251,7 @@ describe("SettingsPage — analytics off confirmation", () => {
 });
 
 describe("SettingsPage — Uninstall Ollama", () => {
-  it("is disabled when nothing Commons-managed is present", async () => {
+  it("is disabled when nothing Catena-managed is present", async () => {
     // Default mockApi: provider cohere, managedBinaryPresent false.
     mockApi();
     render(

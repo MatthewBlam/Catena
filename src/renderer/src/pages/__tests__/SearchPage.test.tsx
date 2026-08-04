@@ -732,7 +732,12 @@ async function searchToResults(query = "reimbursement"): Promise<void> {
   await screen.findByText(/Results for/);
 }
 
-function generateArgs(): { query: string; requestId: number; docs: unknown } {
+function generateArgs(): {
+  query: string;
+  requestId: number;
+  docs: unknown;
+  retry?: boolean;
+} {
   return (window.api.generateAnswer as ReturnType<typeof vi.fn>).mock
     .calls[0][0];
 }
@@ -848,5 +853,58 @@ describe("SearchPage — generated answers", () => {
     expect(
       screen.getByRole("button", { name: "Generate answer" }),
     ).toBeInTheDocument();
+  });
+
+  it("reports Stop as a user cancellation, and a new search as a supersede", async () => {
+    const { promise } = deferred<AnswerResponse>();
+    mockApi({ hasCohereKey: true, sourceCount: 1, searchResponse: ONE_RESULT });
+    window.api.generateAnswer = vi.fn(() => promise);
+    render(<SearchPage visible={true} />);
+    await searchToResults();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    expect(window.api.cancelAnswer).toHaveBeenCalledWith("user_stop");
+
+    // The aborts the app issues for itself must stay unlabelled, so they are not
+    // counted as someone giving up on an answer.
+    vi.mocked(window.api.cancelAnswer).mockClear();
+    const input = screen.getByLabelText("Search your documents");
+    fireEvent.change(input, { target: { value: "budget" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(window.api.cancelAnswer).toHaveBeenCalled());
+    expect(window.api.cancelAnswer).toHaveBeenCalledWith(); // no reason = superseded
+  });
+
+  it("flags a Try again generation as a retry, and a first attempt as not", async () => {
+    mockApi({
+      hasCohereKey: true,
+      sourceCount: 1,
+      searchResponse: ONE_RESULT,
+      answerResponse: {
+        text: "",
+        citations: [],
+        errorKind: "failed",
+        error: "Couldn't generate an answer. Try again.",
+      },
+    });
+    render(<SearchPage visible={true} />);
+    await searchToResults();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+    const tryAgain = await screen.findByRole("button", { name: "Try again" });
+    expect(generateArgs().retry).toBe(false);
+
+    fireEvent.click(tryAgain);
+    await waitFor(() =>
+      expect(window.api.generateAnswer).toHaveBeenCalledTimes(2),
+    );
+    const second = (window.api.generateAnswer as ReturnType<typeof vi.fn>).mock
+      .calls[1][0];
+    expect(second.retry).toBe(true);
   });
 });

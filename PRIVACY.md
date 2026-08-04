@@ -1,6 +1,6 @@
 # Privacy
 
-Commons is local-first: your documents, their embeddings, and your search index
+Catena is local-first: your documents, their embeddings, and your search index
 live in a SQLite database on your machine and are never uploaded anywhere.
 
 Local-first is not local-only, and the difference matters. This document says
@@ -29,7 +29,7 @@ their policy, not a technical guarantee, and it is worth reading yourself:
 <https://cohere.com/security>.
 
 **Ollama.** Nothing leaves your device. Embedding, reranking, and query rewriting
-all run against `localhost:11434`. If you want Commons to be local-only, this is
+all run against `localhost:11434`. If you want Catena to be local-only, this is
 the setting. Switch in Settings → Embedding Provider.
 
 ### Regardless of provider
@@ -51,30 +51,42 @@ Events go to PostHog, identified only by a random UUID generated on first launch
 It is not derived from anything about you or your machine, and is not linked to
 any account.
 
-Commons sends exactly nine events:
+Catena sends exactly eighteen events:
 
-| Event                                | Properties                                                                                                       |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `commons_app_opened`                 | app version, OS platform, number of sources / documents / chunks, embedding provider, whether auto-sync is on    |
-| `commons_search_executed`            | number of results, whether rerank failed, whether the query was rewritten, embedding provider, duration          |
-| `commons_sync_started`               | source provider (`notion` / `google_drive`), whether it was manual or automatic                                  |
-| `commons_sync_completed`             | the same, plus documents processed, documents skipped, number of errors, whether it ended in error, and duration |
-| `commons_source_added`               | source provider                                                                                                  |
-| `commons_source_removed`             | source provider                                                                                                  |
-| `commons_embedding_provider_changed` | the new provider                                                                                                 |
-| `commons_auto_sync_toggled`          | enabled or disabled                                                                                              |
-| `commons_data_cleared`               | none                                                                                                             |
+| Event                               | Properties                                                                                                                                                            |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catena_app_opened`                 | app version, OS platform, number of sources / documents / chunks, embedding provider, whether auto-sync is on                                                         |
+| `catena_search_executed`            | number of results, whether rerank failed, whether the query was rewritten, embedding provider, duration                                                               |
+| `catena_answer_requested`           | embedding provider, chat model name, number of sources the answer will be grounded on, whether it was a retry                                                         |
+| `catena_answer_generated`           | the same, plus total duration, time to the first word, answer length in characters, number of citations, error kind and failure reason, how many sources were dropped |
+| `catena_answer_cancelled`           | the same request properties, plus how long it ran, time to the first word, characters seen before you pressed Stop                                                    |
+| `catena_answer_citation_opened`     | the citation's position in the source list (`1`, `2`, …)                                                                                                              |
+| `catena_sync_started`               | source provider (`notion` / `google_drive`), whether it was manual or automatic                                                                                       |
+| `catena_sync_completed`             | the same, plus documents processed, documents skipped, number of errors, whether it ended in error, and duration                                                      |
+| `catena_source_added`               | source provider                                                                                                                                                       |
+| `catena_source_removed`             | source provider                                                                                                                                                       |
+| `catena_embedding_provider_changed` | the new provider                                                                                                                                                      |
+| `catena_auto_sync_toggled`          | enabled or disabled                                                                                                                                                   |
+| `catena_ollama_setup_started`       | OS platform, and which operation (engine setup or chat-model download)                                                                                                |
+| `catena_ollama_setup_completed`     | the same                                                                                                                                                              |
+| `catena_ollama_uninstall_started`   | OS platform                                                                                                                                                           |
+| `catena_ollama_uninstall_completed` | OS platform                                                                                                                                                           |
+| `catena_ollama_model_changed`       | whether it was the embedding or the chat model                                                                                                                        |
+| `catena_data_cleared`               | none                                                                                                                                                                  |
 
-**No event carries a query, a document, a chunk, a title, a URL, a file name, an
-email address, or an API key.** `commons_search_executed` records that a search
-happened and how it went — never what you searched for.
+**No event carries a query, a question, a document, a chunk, a title, a URL, a
+file name, an email address, or an API key.** `catena_search_executed` records
+that a search happened and how it went — never what you searched for, and the
+`catena_answer_*` events record how an AI answer went — never what was asked or
+what was answered. "Chat model name" is the name of the model itself (for example
+`command-r-08-2024` or `llama3.2`), not anything it produced.
 
 ## Where your data lives
 
 Everything is in one SQLite database under Electron's `userData` directory:
 
-- macOS: `~/Library/Application Support/Commons/commons.db`
-- Windows: `%APPDATA%\Commons\commons.db`
+- macOS: `~/Library/Application Support/Catena/catena.db`
+- Windows: `%APPDATA%\Catena\catena.db`
 
 Delete the app's data directory, or use **Settings → Clear all data**, and it is
 gone. There is no server-side copy to ask us to delete, because there is no
@@ -95,4 +107,4 @@ to Notion. It sees an authorization code in transit and stores nothing.
 
 ## Questions
 
-Open an issue: <https://github.com/MatthewBlam/Commons/issues>.
+Open an issue: <https://github.com/MatthewBlam/Catena/issues>.

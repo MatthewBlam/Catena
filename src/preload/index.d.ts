@@ -1,6 +1,6 @@
 export {};
 
-interface CommonsAPI {
+interface CatenaAPI {
   saveSecret(key: string, value: string): Promise<void>;
   /** No `loadSecret` counterpart, by design — see the preload. Use `hasSecret`. */
   validateCohereKey(key: string): Promise<{ valid: boolean }>;
@@ -25,7 +25,7 @@ interface CommonsAPI {
   setOllamaModel(model: string): Promise<void>;
   setOllamaChatModel(model: string): Promise<void>;
   /**
-   * Completely removes the Commons-managed Ollama: stops our engine, deletes the
+   * Completely removes the Catena-managed Ollama: stops our engine, deletes the
    * pulled models + downloaded binary, and clears the Ollama model settings. A
    * user's own system/manual Ollama is never killed or removed.
    */
@@ -49,8 +49,16 @@ interface CommonsAPI {
   generateAnswer(
     request: import("../shared/types").AnswerRequest,
   ): Promise<import("../shared/types").AnswerResponse>;
-  /** Stops this window's in-flight answer generation. */
-  cancelAnswer(): Promise<void>;
+  /**
+   * Stops this window's in-flight answer generation. Pass `"user_stop"` when the
+   * user pressed Stop; the default (`"superseded"`) is for the app abandoning its
+   * own work, and is not counted as an abandonment.
+   */
+  cancelAnswer(
+    reason?: import("../shared/types").AnswerCancelReason,
+  ): Promise<void>;
+  /** Reports that a citation marker was clicked, by its 1-based rank. */
+  reportCitationOpened(position: number): Promise<void>;
   /** Streams answer tokens; each delta carries the request id it belongs to. */
   onAnswerDelta(
     callback: (delta: import("../shared/types").AnswerDelta) => void,
@@ -117,7 +125,7 @@ interface ElectronDrag {
 
 declare global {
   interface Window {
-    api: CommonsAPI;
+    api: CatenaAPI;
     electronDrag: ElectronDrag;
   }
 }

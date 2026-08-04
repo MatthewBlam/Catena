@@ -68,7 +68,7 @@ function quarantine(dbPath: string): void {
 
 export function getDb(): Database.Database {
   if (_db) return _db;
-  const dbPath = join(app.getPath("userData"), "commons.db");
+  const dbPath = join(app.getPath("userData"), "catena.db");
 
   let db: Database.Database;
   try {

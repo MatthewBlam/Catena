@@ -139,11 +139,11 @@ describe("ollama:uninstall", () => {
 
     expect(uninstallOllama).toHaveBeenCalledTimes(1);
     expect(track).toHaveBeenCalledWith(
-      "commons_ollama_uninstall_started",
+      "catena_ollama_uninstall_started",
       expect.anything(),
     );
     expect(track).toHaveBeenCalledWith(
-      "commons_ollama_uninstall_completed",
+      "catena_ollama_uninstall_completed",
       expect.anything(),
     );
   });

@@ -119,7 +119,7 @@ describe("App readiness gate", () => {
     expect(
       await screen.findByRole("button", { name: "Settings" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Welcome to Commons")).not.toBeInTheDocument();
+    expect(screen.queryByText("Welcome to Catena")).not.toBeInTheDocument();
     // The Search page mounts cleanly — a page that threw during mount (e.g. a
     // missing window.api method) would land in the ErrorBoundary instead.
     expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("App readiness gate", () => {
     // Let the rejected readiness promise settle.
     await act(async () => {});
 
-    expect(screen.queryByText("Welcome to Commons")).not.toBeInTheDocument();
+    expect(screen.queryByText("Welcome to Catena")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Settings" }),
     ).not.toBeInTheDocument();
@@ -151,7 +151,7 @@ describe("App readiness gate", () => {
     mockApi({ onboarded: false, hasCohereKey: true });
     render(<App />);
 
-    expect(await screen.findByText("Welcome to Commons")).toBeInTheDocument();
+    expect(await screen.findByText("Welcome to Catena")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Settings" }),
     ).not.toBeInTheDocument();
@@ -296,7 +296,7 @@ describe("App recents sidebar", () => {
     mockApi({ onboarded: false, recents: [RECENT_1] });
     render(<App />);
 
-    await screen.findByText("Welcome to Commons");
+    await screen.findByText("Welcome to Catena");
     expect(window.api.listRecentSearches).not.toHaveBeenCalled();
   });
 });

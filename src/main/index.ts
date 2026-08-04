@@ -120,7 +120,7 @@ function createWindow(): void {
 app
   .whenReady()
   .then(async () => {
-    electronApp.setAppUserModelId("com.commons.app");
+    electronApp.setAppUserModelId("com.catena.app");
 
     app.on("browser-window-created", (_, window) => {
       optimizer.watchWindowShortcuts(window);
@@ -167,7 +167,7 @@ app
 
     initTelemetry(db);
     const stats = getStorageStats(db);
-    track("commons_app_opened", {
+    track("catena_app_opened", {
       app_version: app.getVersion(),
       platform: process.platform,
       source_count: stats.sourceCount,
@@ -203,7 +203,7 @@ app
     // `app.quit()` makes that guard invisible to the very person it protects.
     // `showErrorBox` is safe to call this early and blocks until dismissed.
     dialog.showErrorBox(
-      "Commons couldn't start",
+      "Catena couldn't start",
       err instanceof Error ? err.message : String(err),
     );
     app.quit();

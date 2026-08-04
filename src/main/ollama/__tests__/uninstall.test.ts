@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // `ollamaDir()` reads Electron's userData path; give it a stable fake.
 vi.mock("electron", () => ({
-  app: { getPath: () => "/tmp/commons-test" },
+  app: { getPath: () => "/tmp/catena-test" },
 }));
 
 // Never touch the engine, the model registry, the filesystem, or native sqlite.

@@ -52,7 +52,11 @@ const api = {
     request: import("../shared/types").AnswerRequest,
   ): Promise<import("../shared/types").AnswerResponse> =>
     ipcRenderer.invoke("answer:generate", request),
-  cancelAnswer: (): Promise<void> => ipcRenderer.invoke("answer:cancel"),
+  cancelAnswer: (
+    reason?: import("../shared/types").AnswerCancelReason,
+  ): Promise<void> => ipcRenderer.invoke("answer:cancel", reason),
+  reportCitationOpened: (position: number): Promise<void> =>
+    ipcRenderer.invoke("answer:citation-opened", position),
   onAnswerDelta: (
     callback: (delta: import("../shared/types").AnswerDelta) => void,
   ): (() => void) => {

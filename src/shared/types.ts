@@ -97,6 +97,25 @@ export interface StoredAnswer {
 }
 
 /**
+ * Why an answer failed, in machine-readable form. `errorKind` drives what the UI
+ * renders (two states) and `error` carries the sentence a human reads; this is
+ * the third axis — the diagnosis, for telemetry. A retired model, a rejected key,
+ * and a rate limit all render as one "failed" banner but are three different
+ * problems, and only this tells them apart in aggregate.
+ */
+export type AnswerFailureReason =
+  | "no_docs"
+  | "no_api_key"
+  | "no_chat_model"
+  | "empty_answer"
+  | "timeout"
+  | "unauthorized"
+  | "rate_limited"
+  | "model_not_found"
+  | "provider_error"
+  | "unknown";
+
+/**
  * The result of an answer-generation request. Like `SearchResponse`, an abort
  * resolves rather than rejects (`cancelled: true`) because an Error's `name`
  * does not survive IPC, so the renderer could not otherwise tell a user-initiated
@@ -110,6 +129,8 @@ export interface AnswerResponse {
   cancelled?: boolean;
   error?: string;
   errorKind?: "no_model" | "failed";
+  /** Set whenever `errorKind` is. Diagnostic only — never rendered. */
+  failureReason?: AnswerFailureReason;
 }
 
 /** What the renderer hands the main process to ground an answer on. */
@@ -120,7 +141,18 @@ export interface AnswerRequest {
   requestId: number;
   /** The current results, in display order. Titles come from here; text is re-fetched by id in main. */
   docs: { chunkId: string; documentTitle: string }[];
+  /** True when this is "Try again" after a failure, so recovery is measurable. */
+  retry?: boolean;
 }
+
+/**
+ * Why an in-flight generation is being stopped. `user_stop` is the user pressing
+ * Stop — a real abandonment signal, and the only one worth an event. `superseded`
+ * is the app abandoning its own work (a new search, a restore, an unmount), which
+ * is not a user action and is deliberately not counted, mirroring how a superseded
+ * search fires no `catena_search_executed`.
+ */
+export type AnswerCancelReason = "user_stop" | "superseded";
 
 /** A streamed chunk of answer text, tagged with the request it belongs to. */
 export interface AnswerDelta {
@@ -263,7 +295,7 @@ export interface OllamaStatusDetail {
   chatReady: boolean;
   /** A managed setup run is in flight (single-flight guard). */
   setupInProgress: boolean;
-  /** A Commons-managed engine binary is present on disk (independent of whether
+  /** A Catena-managed engine binary is present on disk (independent of whether
    * it's running) — i.e. there is something for "Uninstall Ollama" to remove. */
   managedBinaryPresent: boolean;
 }

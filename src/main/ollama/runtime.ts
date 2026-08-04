@@ -41,7 +41,7 @@ export function isEngineOwned(): boolean {
 }
 
 /**
- * True if a Commons-managed engine binary is present on disk. Cheap and
+ * True if a Catena-managed engine binary is present on disk. Cheap and
  * side-effect-free (no spawn, no network) so status/UI can tell whether there is
  * anything to uninstall even when the engine is not running.
  */

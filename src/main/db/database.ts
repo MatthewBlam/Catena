@@ -670,7 +670,7 @@ interface RecentSearchDbRow {
  * Collapses a query to the form two searches are "the same" for recent-search
  * dedup purposes: trims, collapses internal whitespace runs, lowercases.
  * Done in JS rather than SQL `LOWER()` because `LOWER()` only folds ASCII —
- * club names and search terms are not guaranteed to be.
+ * organization names and search terms are not guaranteed to be.
  */
 function normalizeQuery(query: string): string {
   return query.replace(/\s+/g, " ").trim().toLowerCase();

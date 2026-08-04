@@ -62,13 +62,13 @@ describe("runMigrations", () => {
     expect(currentVersion(db)).toBe(LATEST);
   });
 
-  it("refuses a database from a newer build of Commons", () => {
+  it("refuses a database from a newer build of Catena", () => {
     migrateTo(db, LATEST);
     db.prepare(
       "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
     ).run(999, "2099-01-01T00:00:00Z");
 
-    expect(() => runMigrations(db)).toThrow(/newer version of Commons/);
+    expect(() => runMigrations(db)).toThrow(/newer version of Catena/);
   });
 });
 
@@ -239,8 +239,8 @@ describe("pre-migration backup", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "commons-mig-"));
-    dbPath = join(dir, "commons.db");
+    dir = mkdtempSync(join(tmpdir(), "catena-mig-"));
+    dbPath = join(dir, "catena.db");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -257,7 +257,7 @@ describe("pre-migration backup", () => {
 
     // The pre-migration state was v5, so the backup is named for that version.
     // A plain copyFileSync of the .db would miss this row entirely — it is
-    // still in commons.db-wal at this point.
+    // still in catena.db-wal at this point.
     const backup = new DatabaseCtor(`${dbPath}.backup-v5.db`, {
       readonly: true,
     });
@@ -309,7 +309,7 @@ describe("pre-migration backup", () => {
     migrateTo(db, 5);
 
     // An unwritable backup target stands in for a full disk.
-    const unwritable = join(dir, "no", "such", "dir", "commons.db");
+    const unwritable = join(dir, "no", "such", "dir", "catena.db");
 
     expect(() => runMigrations(db, unwritable)).toThrow(/Could not back up/);
     // The destructive migration must not have run.

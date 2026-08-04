@@ -160,7 +160,7 @@ export async function startGoogleOAuth(
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(
-          "<h1>Connected to Google Drive!</h1><p>You can close this tab and return to Commons.</p>",
+          "<h1>Connected to Google Drive!</h1><p>You can close this tab and return to Catena.</p>",
         );
 
         safeResolve({ email });

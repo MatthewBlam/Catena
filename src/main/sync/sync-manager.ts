@@ -111,7 +111,7 @@ export interface ReconcileResult {
  * complete walk — see `SyncWalkResult.complete`.
  *
  * The guard exists because the failure mode is unrecoverable and the signal is
- * ambiguous: revoking Commons' access to half a workspace looks exactly like
+ * ambiguous: revoking Catena' access to half a workspace looks exactly like
  * deleting half a workspace. We would rather leave stale documents in the index
  * for one more sync than shred a corpus over a permissions change.
  */

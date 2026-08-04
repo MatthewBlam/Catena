@@ -201,8 +201,8 @@ export function runMigrations(db: Database.Database, dbPath?: string): void {
 
   if (currentVersion > LATEST_VERSION) {
     throw new Error(
-      `This database was created by a newer version of Commons (schema v${currentVersion}, ` +
-        `this build supports v${LATEST_VERSION}). Please update Commons.`,
+      `This database was created by a newer version of Catena (schema v${currentVersion}, ` +
+        `this build supports v${LATEST_VERSION}). Please update Catena.`,
     );
   }
 
@@ -219,7 +219,7 @@ export function runMigrations(db: Database.Database, dbPath?: string): void {
     } catch (err) {
       throw new Error(
         `Could not back up the database before upgrading it (${err instanceof Error ? err.message : String(err)}). ` +
-          `Free up disk space and reopen Commons. Your data has not been modified.`,
+          `Free up disk space and reopen Catena. Your data has not been modified.`,
         { cause: err },
       );
     }
