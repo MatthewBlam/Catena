@@ -63,10 +63,38 @@ interface CatenaAPI {
   onAnswerDelta(
     callback: (delta: import("../shared/types").AnswerDelta) => void,
   ): () => void;
-  startNotionOAuth(): Promise<{ workspaceName: string }>;
+  /**
+   * Runs the Notion OAuth flow. Also the way to *widen* an existing connection:
+   * Notion's page picker pre-checks what is already shared, so re-running this
+   * adds pages rather than replacing them.
+   *
+   * Resolves with `workspaceSwitch` set when the flow authorized a different
+   * workspace than existing sources belong to; the new token is withheld until
+   * `resolveNotionWorkspaceSwitch` settles it.
+   */
+  startNotionOAuth(): Promise<import("../shared/types").NotionOAuthStarted>;
   cancelNotionOAuth(): Promise<void>;
+  /**
+   * Commits (`true`) or discards (`false`) a token withheld by a workspace
+   * switch. Idempotent — the pending token is dropped either way.
+   */
+  resolveNotionWorkspaceSwitch(accept: boolean): Promise<void>;
+  /**
+   * Notion sources whose root page the stored token can no longer read — the
+   * casualties of an OAuth re-selection that dropped a previously-granted page.
+   * Empty when disconnected or when nothing is stranded.
+   */
+  checkNotionSourceAccess(): Promise<
+    import("../shared/types").OrphanedNotionSource[]
+  >;
   listNotionPages(): Promise<import("../shared/types").NotionItemSummary[]>;
-  startGoogleOAuth(): Promise<{ email: string }>;
+  /**
+   * Runs the Google OAuth flow. Also the way to reconnect an existing Drive
+   * connection — non-destructive, since `drive.readonly` covers the whole
+   * account. Resolves with `accountChanged` set only when a *different* Google
+   * account was authorized while Drive sources exist.
+   */
+  startGoogleOAuth(): Promise<import("../shared/types").GoogleOAuthStarted>;
   cancelGoogleOAuth(): Promise<void>;
   listDriveItems(
     parentId?: string,

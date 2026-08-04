@@ -1,12 +1,23 @@
 import type { EmbedConfig } from "./embedder";
 
+// Written against the failure mode `isUsableRewrite` catches: asked only to be
+// concise, a model handed a vague question ("what are all the important dates?")
+// answers it conversationally — offering help, requesting clarification — because
+// that is the natural chat completion. So the prompt forbids that turn explicitly
+// and gives it something to do instead (extract the terms), rather than relying on
+// "output ONLY the query" to be self-evident.
 const SYSTEM_PROMPT =
-  "You are a search query optimizer. Rewrite the user's question as a short keyword-rich search phrase (5-10 words). Output ONLY the rewritten query, nothing else.";
+  "You are a search query optimizer. Rewrite the user's question as a short keyword-rich search phrase (5-10 words). " +
+  "Output ONLY that phrase — no preamble, no explanation, no quotes. " +
+  "Never ask for clarification and never address the user: if the question is vague, just extract its key nouns.";
 
-// Rewriting a query to keywords is a trivial task, so use Cohere's smallest,
-// cheapest chat model (Command R7B). A 404/failure here is harmless — the search
-// just falls back to the raw query. (The old bare `command-r` alias now 404s.)
-const COHERE_REWRITE_MODEL = "command-r7b-12-2024";
+// Command R, the same snapshot the answerer uses. This was briefly Command R7B
+// (smallest/cheapest, on the theory that keyword extraction is trivial) — but the
+// task is not "trivial", it is *instruction-following*, and R7B routinely answered
+// the question instead of rewriting it. `isUsableRewrite` now discards such a
+// reply, so a weak model degrades to no rewrite rather than a poisoned one; this
+// is about how often that happens, since a discarded rewrite is a wasted call.
+const COHERE_REWRITE_MODEL = "command-r-08-2024";
 
 const COHERE_TIMEOUT_MS = 3_000;
 const OLLAMA_TIMEOUT_MS = 5_000;
@@ -43,6 +54,47 @@ function isQuestionQuery(query: string): boolean {
 
 function wordCount(query: string): number {
   return query.split(/\s+/).filter(Boolean).length;
+}
+
+/** The prompt asks for 5-10 words; allow slack before calling a reply non-compliant. */
+const MAX_REWRITE_WORDS = 12;
+
+/**
+ * Whether a model's reply is actually a search phrase.
+ *
+ * A rewrite is only ever *asked* for — nothing makes the model comply, and an
+ * HTTP 200 carrying a refusal, a preamble, or a clarifying question is not a
+ * failure any status check can catch. Small models (the cheap ones this uses)
+ * answer conversationally often enough that this is the common case, not an edge
+ * one. Accepting such a reply is worse than not rewriting at all: it becomes the
+ * FTS query, where `searchFts` splits it on whitespace and ORs every token, so a
+ * one-sentence pleasantry dilutes keyword search into dozens of stopwords — and
+ * it surfaces to the user as the "searched as" label.
+ *
+ * The three rejections below are shape checks, not content checks: prose runs
+ * long, chat replies carry a preamble line, and a "rewrite" that grew has
+ * condensed nothing. A rejected rewrite degrades to the raw query, exactly as an
+ * HTTP failure does.
+ */
+function isUsableRewrite(rewrite: string, original: string): boolean {
+  if (rewrite.includes("\n")) return false;
+  if (wordCount(rewrite) > MAX_REWRITE_WORDS) return false;
+  if (rewrite.length > original.length) return false;
+  return true;
+}
+
+/** The rewrite if it is usable, else null — logged, since a silent fallback is
+ *  indistinguishable from a model that is quietly never complying. */
+function acceptRewrite(
+  rewrite: string | null,
+  original: string,
+): string | null {
+  if (rewrite === null) return null;
+  if (isUsableRewrite(rewrite, original)) return rewrite;
+  console.warn(
+    `Discarded a non-compliant query rewrite (${wordCount(rewrite)} words): ${JSON.stringify(rewrite.slice(0, 120))}`,
+  );
+  return null;
 }
 
 /** Our timeout, plus the caller's cancellation if it gave us one. */
@@ -140,14 +192,20 @@ export async function rewriteQuery(
 
   try {
     if (embedConfig.apiKey) {
-      const result = await rewriteWithCohere(query, embedConfig.apiKey, signal);
+      const result = acceptRewrite(
+        await rewriteWithCohere(query, embedConfig.apiKey, signal),
+        query,
+      );
       if (result) return result;
       return query;
     }
 
     const primaryModel = embedConfig.ollamaModel;
     if (primaryModel) {
-      const result = await rewriteWithOllama(query, primaryModel, signal);
+      const result = acceptRewrite(
+        await rewriteWithOllama(query, primaryModel, signal),
+        query,
+      );
       if (result) return result;
     }
 
@@ -155,10 +213,9 @@ export async function rewriteQuery(
     if (signal?.aborted) return query;
 
     if (primaryModel !== OLLAMA_FALLBACK_MODEL) {
-      const result = await rewriteWithOllama(
+      const result = acceptRewrite(
+        await rewriteWithOllama(query, OLLAMA_FALLBACK_MODEL, signal),
         query,
-        OLLAMA_FALLBACK_MODEL,
-        signal,
       );
       if (result) return result;
     }

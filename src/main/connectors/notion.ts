@@ -362,6 +362,47 @@ function blockToLine(block: BlockObjectResponse): string | null {
   }
 }
 
+/**
+ * Which of `ids` the token can actually read right now.
+ *
+ * Deliberately a direct retrieve per id rather than a diff against
+ * `listNotionItems`: `search` is an index and is eventually consistent, so a page
+ * granted moments ago can be missing from it. Reporting a page as lost when it is
+ * not would push the user into a re-authorization that *really does* lose pages —
+ * the exact failure this check exists to catch. A retrieve is a permission
+ * question, answered by the page itself.
+ *
+ * Sequential, because the caller has a handful of sources at most and Notion's
+ * rate limit (~3 rps) is not worth risking to save a few hundred milliseconds.
+ */
+export async function checkNotionPageAccess(
+  token: string,
+  ids: string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const client = new Client({ auth: token, logLevel: LogLevel.ERROR });
+  const accessible = new Set<string>();
+
+  for (const id of ids) {
+    try {
+      await client.pages.retrieve({ page_id: id });
+      accessible.add(id);
+      continue;
+    } catch {
+      // Not a readable page — it may still be a database root (listNotionItems
+      // offers those too), for which `pages.retrieve` always fails.
+    }
+    try {
+      await client.databases.retrieve({ database_id: id });
+      accessible.add(id);
+    } catch {
+      // Neither: the token cannot reach it.
+    }
+  }
+
+  return accessible;
+}
+
 export async function listNotionItems(
   token: string,
 ): Promise<NotionItemSummary[]> {

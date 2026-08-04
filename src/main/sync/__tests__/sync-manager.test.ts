@@ -955,6 +955,39 @@ describe("reconcileDeletedDocuments (H5)", () => {
     expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(3);
   });
 
+  it("keeps the indexed corpus when the source's root page loses access", async () => {
+    // What happens after a Notion re-authorization drops a previously granted
+    // page: the connector's very first `pages.retrieve` 404s. The already-indexed
+    // documents must survive — losing *access* is not the provider telling us the
+    // documents are gone, and re-granting must not mean re-syncing from scratch.
+    await seed(3);
+    const notFound = Object.assign(new Error("Could not find page"), {
+      status: 404,
+    });
+
+    await expect(
+      syncSource(
+        db,
+        "src-1",
+        "notion",
+        {
+          // eslint-disable-next-line require-yield
+          async *fetchDocuments(): AsyncGenerator<RawDocument, SyncWalkResult> {
+            throw notFound;
+          },
+        },
+        testConfig,
+        () => {},
+      ),
+    ).rejects.toThrow(/Could not find page/);
+
+    // The throw escapes before the reconcile step, so the seen-set — empty and
+    // meaningless here — is never consulted.
+    expect(getDocumentsBySourceId(db, "src-1")).toHaveLength(3);
+    // And the documents stay searchable, not just present.
+    expect(searchFts(db, "zebra", 10).length).toBeGreaterThan(0);
+  });
+
   it("does not delete when the sync was cancelled", async () => {
     await seed(3);
     const controller = new AbortController();

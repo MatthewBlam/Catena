@@ -132,6 +132,41 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/ca
 - [ ] "Add sources" creates the selected sources and refreshes the list
 - [ ] "Close" returns to the idle state at any point
 
+### Changing Which Notion Pages Catena Can Read
+
+Catena is a **public** Notion connection, so the OAuth page picker is the only
+way its page access can change — the per-page "Add connections" menu is for
+internal connections and does not list Catena. That picker opens with **nothing
+selected**, and the selection it returns becomes the _complete_ grant: any page
+not re-ticked loses access. The UI exists to make that survivable, not to hide it.
+
+- [ ] With Notion already connected, reopening the picker lists only the originally granted pages
+- [ ] "Choose pages in Notion…" opens a warning dialog **before** any browser window
+- [ ] The dialog states the selection is replaced, lists every connected Notion source by name, and suggests selecting a parent page
+- [ ] "Cancel" closes the dialog and does NOT open the browser
+- [ ] "Open Notion" opens the Notion consent page
+- [ ] Re-ticking the listed pages plus a new one returns to the app and reloads the list with all of them
+- [ ] The newly granted page can be added as a source and syncs
+- [ ] A source added before the re-authorization still syncs afterwards (the token swap must not disturb it)
+- [ ] "Cancel" during the wait returns to the list with no error banner, and the existing connection still works
+- [ ] The button is also offered when the list is empty ("No pages found.")
+- [ ] A re-authorization failure shows a banner but leaves the loaded page list intact
+
+### Detecting Sources That Lost Access
+
+- [ ] Deliberately re-authorize and tick ONLY a new page, dropping an existing source's page
+- [ ] A warning names the dropped source(s) and says they will stop syncing
+- [ ] The warning offers "Choose pages in Notion…" to go straight back and fix it
+- [ ] Re-authorizing with every page ticked clears the warning
+- [ ] Selecting a **parent** page and adding it as one source indexes the pages beneath it, and new pages added under it later are picked up by a normal sync with no re-authorization
+
+### Switching Notion Workspaces (needs a second workspace)
+
+- [ ] Re-authorizing into a different workspace while Notion sources exist shows "Switch Notion workspace?" naming both workspaces and the affected source count
+- [ ] "Cancel" leaves the original connection intact — existing sources still sync
+- [ ] "Switch anyway" commits the new workspace and reloads the page list
+- [ ] Disconnecting Notion in Settings and reconnecting to a different workspace does NOT prompt (there is nothing left to orphan)
+
 ### Connect Google Drive (OAuth)
 
 - [ ] Clicking "Connect Google Drive" opens the Google OAuth page in the default browser
@@ -146,6 +181,20 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/ca
 - [ ] Filter narrows the list (placeholder "Filter"); no matches shows "No results found."; an empty folder shows "This folder is empty."
 - [ ] Checking folders updates the "Add {n} source(s)" button label
 - [ ] "Add sources" creates the selected sources and refreshes the list
+
+### Picking Up New Drive Content
+
+Drive's scope is `drive.readonly` over the whole account, so new files are
+already reachable by the existing token — nothing needs re-authorizing. What
+hides them is the picker's in-memory folder cache.
+
+- [ ] Add a folder in Drive while the picker is open, click "Refresh" → it appears
+- [ ] Add a file to an already-synced folder, then Sync that source → the file is indexed (no reconnect needed)
+- [ ] "Reconnect Google Drive" runs OAuth with **no** confirmation dialog first
+- [ ] After reconnecting the same account, the listing reloads from My Drive and everything still syncs
+- [ ] "Cancel" during the wait returns to the listing with no error banner
+- [ ] A reconnect failure shows a banner but leaves the loaded listing intact
+- [ ] Reconnecting as a **different** Google account shows a warning naming both accounts and the affected source count (does not block)
 
 ### Source List
 

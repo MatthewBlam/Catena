@@ -12,7 +12,10 @@ import { Spinner } from "@renderer/components/ui/spinner";
 import { ErrorBanner } from "@renderer/components/ui/error-banner";
 import { VirtualList } from "@renderer/components/ui/VirtualList";
 import { toErrorMessage, authAwareMessage } from "@renderer/lib/errors";
-import type { DriveItemSummary } from "../../../../shared/types";
+import type {
+  DriveItemSummary,
+  GoogleOAuthStarted,
+} from "../../../../shared/types";
 
 interface DrivePickerProps {
   onAdd: (
@@ -40,6 +43,16 @@ export function DrivePicker({
   ]);
   const [trailExpanded, setTrailExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [reconnecting, setReconnecting] = useState(false);
+  // Separate from `error`, which is fatal and replaces the picker: a failed
+  // reconnect leaves the loaded listing perfectly usable.
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
+  // The switch details plus the account actually authorized, which rides on the
+  // result rather than inside `accountChanged`.
+  const [accountChanged, setAccountChanged] = useState<
+    | (NonNullable<GoogleOAuthStarted["accountChanged"]> & { newEmail: string })
+    | null
+  >(null);
   // A monotonic request id, not a single boolean: navigating A (slow) then B
   // (fast) must not let A's late response clobber B's contents while the
   // breadcrumbs read B — which would add a source under the wrong parent. Only
@@ -94,6 +107,59 @@ export function DrivePicker({
       mountedRef.current = false;
     };
   }, []);
+
+  /**
+   * Re-lists the folder on screen, ignoring the cache.
+   *
+   * This — not re-authorizing — is what surfaces files added to Drive since the
+   * picker was opened. The `drive.readonly` scope already covers the whole
+   * account, so new files are reachable by the existing token the moment they
+   * exist; only `cacheRef` stands between them and the list.
+   */
+  function refreshCurrentFolder(): void {
+    const current = breadcrumbs[breadcrumbs.length - 1];
+    void fetchFolder(current.id, true);
+  }
+
+  /**
+   * Re-runs Google's OAuth flow. Deliberately unguarded, unlike Notion's page
+   * picker: Drive grants read access to the entire account, so reconnecting the
+   * same account re-grants exactly what was there before and cannot drop
+   * anything. Useful for a revoked or expired grant, or to switch accounts —
+   * that last case is reported afterwards, never blocked.
+   */
+  async function handleReconnect(): Promise<void> {
+    setReconnectError(null);
+    setAccountChanged(null);
+    setReconnecting(true);
+    try {
+      const result = await window.api.startGoogleOAuth();
+      if (!mountedRef.current) return;
+      if (result.accountChanged) {
+        setAccountChanged({ ...result.accountChanged, newEmail: result.email });
+      }
+      // A different account has an entirely different folder tree, so every
+      // cached listing — and the trail into it — is meaningless now.
+      cacheRef.current.clear();
+      setSelected(new Map());
+      setSearchQuery("");
+      setTrailExpanded(false);
+      setBreadcrumbs([{ id: "root", name: "My Drive" }]);
+      void fetchFolder("root", true);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      const msg = toErrorMessage(err, "Failed to connect to Google Drive.");
+      // Cancelling is a decision, not a failure — matches ConnectDriveButton.
+      if (msg !== "OAuth canceled") setReconnectError(authAwareMessage(msg));
+    } finally {
+      if (mountedRef.current) setReconnecting(false);
+    }
+  }
+
+  function handleCancelReconnect(): void {
+    setReconnecting(false);
+    window.api.cancelGoogleOAuth().catch(() => {});
+  }
 
   function navigateInto(folder: DriveItemSummary): void {
     setSearchQuery("");
@@ -203,6 +269,19 @@ export function DrivePicker({
 
   return (
     <div className="space-y-3">
+      {accountChanged && (
+        <ErrorBanner
+          variant="warning"
+          onDismiss={() => setAccountChanged(null)}
+        >
+          You reconnected as <strong>{accountChanged.newEmail}</strong>, but
+          your {accountChanged.sourceCount} existing Drive source
+          {accountChanged.sourceCount === 1 ? "" : "s"} came from{" "}
+          <strong>{accountChanged.previousEmail}</strong>. They will stop
+          syncing until you reconnect with that account.
+        </ErrorBanner>
+      )}
+
       <p className="text-sm text-muted-foreground">Select folders to sync</p>
 
       <div className="relative">
@@ -321,6 +400,40 @@ export function DrivePicker({
           ),
         )}
       </div>
+
+      {/* No confirmation gate here, unlike NotionPicker: `drive.readonly` covers
+          the whole account, so reconnecting re-grants what was already granted
+          and cannot drop a folder. */}
+      {reconnecting ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Spinner className="size-4" />
+          <span>Waiting for Google authorization…</span>
+          <Button
+            className="ml-auto"
+            variant="destructive-outline"
+            size="xs"
+            onClick={handleCancelReconnect}
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            Added something in Drive?
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" size="xs" onClick={refreshCurrentFolder}>
+              Refresh
+            </Button>
+            <Button variant="outline" size="xs" onClick={handleReconnect}>
+              Reconnect Google Drive
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {reconnectError && <ErrorBanner>{reconnectError}</ErrorBanner>}
 
       <div className="flex gap-2 justify-end">
         <Button variant="ghost" size="sm" onClick={onClose}>

@@ -6,6 +6,8 @@ import { saveSecret, loadSecret, deleteSecret } from "../auth/storage";
 import {
   getSetting,
   upsertSetting,
+  deleteSetting,
+  getAllSources,
   getAllSourcesWithCounts,
   insertSource,
   deleteSource,
@@ -32,7 +34,7 @@ import {
   type AnswerDoc,
 } from "../search/answerer";
 import { startNotionOAuth, cancelNotionOAuth } from "../auth/notion-oauth";
-import { listNotionItems } from "../connectors/notion";
+import { listNotionItems, checkNotionPageAccess } from "../connectors/notion";
 import {
   startGoogleOAuth,
   cancelGoogleOAuth,
@@ -46,6 +48,8 @@ import type {
   SourceConfig,
   AnswerRequest,
   AnswerCancelReason,
+  NotionOAuthStarted,
+  GoogleOAuthStarted,
 } from "../../shared/types";
 import {
   cancelSync,
@@ -114,6 +118,62 @@ interface AnswerRun {
  */
 const activeAnswers = new Map<number, AnswerRun>();
 
+/**
+ * Which Notion workspace the stored token belongs to. Plain settings rather than
+ * secrets: a workspace id and name are identifiers, not credentials.
+ */
+const NOTION_WORKSPACE_ID_KEY = "notion_workspace_id";
+const NOTION_WORKSPACE_NAME_KEY = "notion_workspace_name";
+
+/** Which Google account the stored Drive tokens belong to. Not a credential. */
+const GOOGLE_ACCOUNT_EMAIL_KEY = "google_account_email";
+
+interface PendingNotionAuth {
+  accessToken: string;
+  workspaceId: string | null;
+  workspaceName: string;
+}
+
+/**
+ * A freshly obtained Notion token that has *not* been stored, because taking it
+ * would point the app at a different workspace than every existing Notion source
+ * belongs to. Held here until the renderer resolves the choice, so the working
+ * connection survives a re-auth the user did not mean to make.
+ *
+ * Deliberately in-memory: if the app dies with a switch unresolved, the pending
+ * token dies with it and the old one is still stored. Failing closed is correct —
+ * the fallback is "nothing changed".
+ */
+let pendingNotionAuth: PendingNotionAuth | null = null;
+
+/**
+ * Notion ids are UUIDs, and the codebase already normalizes them by stripping
+ * dashes (see `listNotionItems`). Compare on that basis so a formatting
+ * difference can never be mistaken for a different workspace — a false positive
+ * here blocks the user from the very flow this feature exists to provide.
+ */
+function normalizeWorkspaceId(id: string | null): string | null {
+  if (!id) return null;
+  const normalized = id.replace(/-/g, "").toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+/** Stores the token and records the workspace it came from, as one step. */
+function commitNotionAuth(
+  db: ReturnType<typeof getDb>,
+  auth: PendingNotionAuth,
+): void {
+  saveSecret(db, "notion_token", auth.accessToken);
+  if (auth.workspaceId) {
+    upsertSetting(db, NOTION_WORKSPACE_ID_KEY, auth.workspaceId);
+  } else {
+    // Unknown workspace: clear rather than keep the previous id, which describes
+    // a token we just replaced and would compare against the wrong thing.
+    deleteSetting(db, NOTION_WORKSPACE_ID_KEY);
+  }
+  upsertSetting(db, NOTION_WORKSPACE_NAME_KEY, auth.workspaceName);
+}
+
 /** The chat model an answer will be generated with, for the current provider. */
 function resolveAnswerModel(
   db: ReturnType<typeof getDb>,
@@ -139,7 +199,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("secrets:delete", (_, key: string) => {
     if (!ALLOWED_SECRET_KEYS.has(key))
       throw new Error(`Unknown secret key: ${key}`);
-    deleteSecret(getDb(), key);
+    const db = getDb();
+    deleteSecret(db, key);
+
+    // The recorded workspace describes the token that just went away. Left
+    // behind, it would make the next *fresh* connect look like a switch away
+    // from a workspace we are no longer connected to at all.
+    if (key === "notion_token") {
+      pendingNotionAuth = null;
+      deleteSetting(db, NOTION_WORKSPACE_ID_KEY);
+      deleteSetting(db, NOTION_WORKSPACE_NAME_KEY);
+    }
+    if (key === "google_tokens") {
+      deleteSetting(db, GOOGLE_ACCOUNT_EMAIL_KEY);
+    }
   });
 
   ipcMain.handle("secrets:has", (_, key: string) => {
@@ -200,20 +273,86 @@ export function registerIpcHandlers(): void {
     await shell.openExternal(url);
   });
 
-  ipcMain.handle("auth:notion-oauth-start", async () => {
-    const clientId = process.env.NOTION_CLIENT_ID;
-    // The client *secret* is deliberately not here. It lives in the Worker at
-    // NOTION_TOKEN_PROXY_URL, which is the only party that can exchange a code.
-    const tokenProxyUrl = process.env.NOTION_TOKEN_PROXY_URL;
-    if (!clientId || !tokenProxyUrl) {
-      throw new Error(
-        "Notion OAuth is not configured. Set NOTION_CLIENT_ID and NOTION_TOKEN_PROXY_URL (see worker/README.md).",
+  // Runs for a first connection *and* for a re-authorization that widens which
+  // pages Catena may read — Notion's picker pre-checks what is already shared, so
+  // running this again is how a user adds pages they did not tick originally.
+  ipcMain.handle(
+    "auth:notion-oauth-start",
+    async (): Promise<NotionOAuthStarted> => {
+      const clientId = process.env.NOTION_CLIENT_ID;
+      // The client *secret* is deliberately not here. It lives in the Worker at
+      // NOTION_TOKEN_PROXY_URL, which is the only party that can exchange a code.
+      const tokenProxyUrl = process.env.NOTION_TOKEN_PROXY_URL;
+      if (!clientId || !tokenProxyUrl) {
+        throw new Error(
+          "Notion OAuth is not configured. Set NOTION_CLIENT_ID and NOTION_TOKEN_PROXY_URL (see worker/README.md).",
+        );
+      }
+
+      // An earlier flow's withheld token must not outlive the flow that produced
+      // it, or a later accept would commit a token the user has moved on from.
+      pendingNotionAuth = null;
+
+      const result = await startNotionOAuth(clientId, tokenProxyUrl);
+      const db = getDb();
+      const auth: PendingNotionAuth = {
+        accessToken: result.accessToken,
+        workspaceId: result.workspaceId,
+        workspaceName: result.workspaceName,
+      };
+
+      const previousId = normalizeWorkspaceId(
+        getSetting(db, NOTION_WORKSPACE_ID_KEY),
       );
-    }
-    const result = await startNotionOAuth(clientId, tokenProxyUrl);
-    saveSecret(getDb(), "notion_token", result.accessToken);
-    return { workspaceName: result.workspaceName };
-  });
+      const nextId = normalizeWorkspaceId(result.workspaceId);
+      const notionSourceCount = getAllSources(db).filter(
+        (s) => s.provider === "notion",
+      ).length;
+      // With no token stored there is no working connection to protect — and
+      // withholding one there would strand it: `ConnectNotionButton` runs OAuth
+      // only in that state and ignores this result, so nothing would ever
+      // resolve the switch and the user would end up connected to nothing.
+      const alreadyConnected = loadSecret(db, "notion_token") !== null;
+
+      // Interrupt only for a switch that is both provable and costly: an
+      // existing connection, both workspaces known, genuinely different, and
+      // sources bound to the old one. Every other case — first connect, same
+      // workspace, unknown id, nothing to orphan — commits as it always did.
+      if (
+        alreadyConnected &&
+        previousId &&
+        nextId &&
+        previousId !== nextId &&
+        notionSourceCount > 0
+      ) {
+        pendingNotionAuth = auth;
+        return {
+          workspaceName: result.workspaceName,
+          workspaceSwitch: {
+            previousName: getSetting(db, NOTION_WORKSPACE_NAME_KEY) ?? "",
+            nextName: result.workspaceName,
+            sourceCount: notionSourceCount,
+          },
+        };
+      }
+
+      commitNotionAuth(db, auth);
+      return { workspaceName: result.workspaceName };
+    },
+  );
+
+  // Resolves the choice `auth:notion-oauth-start` deferred. Idempotent: the
+  // pending token is dropped either way, so a repeated or late call is a no-op
+  // rather than a second chance to commit.
+  ipcMain.handle(
+    "auth:notion-workspace-switch-resolve",
+    (_, accept: boolean) => {
+      const pending = pendingNotionAuth;
+      pendingNotionAuth = null;
+      if (!pending || !accept) return;
+      commitNotionAuth(getDb(), pending);
+    },
+  );
 
   ipcMain.handle("auth:notion-oauth-cancel", () => {
     cancelNotionOAuth();
@@ -226,17 +365,44 @@ export function registerIpcHandlers(): void {
     return listNotionItems(token);
   });
 
-  ipcMain.handle("auth:google-oauth-start", async () => {
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    if (!clientId || !clientSecret) {
-      throw new Error(
-        "Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.",
-      );
-    }
-    const result = await startGoogleOAuth(clientId, clientSecret, getDb());
-    return { email: result.email };
-  });
+  // Runs for a first connection *and* for a plain reconnect. Unlike Notion, a
+  // reconnect here is non-destructive: the `drive.readonly` scope covers the
+  // whole account, so re-authorizing the same account re-grants exactly what was
+  // granted before. Only a different account is worth mentioning.
+  ipcMain.handle(
+    "auth:google-oauth-start",
+    async (): Promise<GoogleOAuthStarted> => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      if (!clientId || !clientSecret) {
+        throw new Error(
+          "Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.",
+        );
+      }
+      const db = getDb();
+      const previousEmail = getSetting(db, GOOGLE_ACCOUNT_EMAIL_KEY);
+
+      // `startGoogleOAuth` stores the tokens itself, so there is no withholding
+      // step here as there is for Notion — this reports after the fact.
+      const result = await startGoogleOAuth(clientId, clientSecret, db);
+      upsertSetting(db, GOOGLE_ACCOUNT_EMAIL_KEY, result.email);
+
+      const driveSourceCount = getAllSources(db).filter(
+        (s) => s.provider === "google_drive",
+      ).length;
+      if (
+        previousEmail &&
+        previousEmail !== result.email &&
+        driveSourceCount > 0
+      ) {
+        return {
+          email: result.email,
+          accountChanged: { previousEmail, sourceCount: driveSourceCount },
+        };
+      }
+      return { email: result.email };
+    },
+  );
 
   ipcMain.handle("auth:google-oauth-cancel", () => {
     cancelGoogleOAuth();
@@ -471,6 +637,32 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("answer:citation-opened", (_, position: number) => {
     if (!Number.isInteger(position) || position < 1) return;
     track("catena_answer_citation_opened", { position });
+  });
+
+  // Which Notion sources the current token can no longer read. Notion's OAuth
+  // picker *replaces* the granted page set rather than adding to it, so a
+  // re-authorization that misses a previously-granted page silently strands
+  // every source under it — the sources still look healthy here and only fail at
+  // the next sync. This turns that into something nameable and recoverable.
+  ipcMain.handle("notion:check-source-access", async () => {
+    const db = getDb();
+    const token = loadSecret(db, "notion_token");
+    // No token is a disconnected app, not an orphaned one. Reporting every
+    // source as lost here would be a false alarm on top of an obvious state.
+    if (!token) return [];
+
+    const notionSources = getAllSources(db).filter(
+      (s) => s.provider === "notion",
+    );
+    if (notionSources.length === 0) return [];
+
+    const accessible = await checkNotionPageAccess(
+      token,
+      notionSources.map((s) => s.rootExternalId),
+    );
+    return notionSources
+      .filter((s) => !accessible.has(s.rootExternalId))
+      .map((s) => ({ id: s.id, name: s.name }));
   });
 
   ipcMain.handle("recents:list", () => {

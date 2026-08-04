@@ -7,6 +7,7 @@ import type {
 import {
   blocksToText,
   extractPageTitle,
+  checkNotionPageAccess,
   listNotionItems,
   NotionConnector,
 } from "../notion";
@@ -879,5 +880,50 @@ describe("listNotionItems", () => {
     const items = await listNotionItems("test-token");
 
     expect(items).toHaveLength(1);
+  });
+});
+
+describe("checkNotionPageAccess", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function notFound(): Error & { status: number } {
+    return Object.assign(new Error("Could not find page"), { status: 404 });
+  }
+
+  it("reports the ids the token can still read", async () => {
+    mockClient.pages.retrieve.mockImplementation(
+      ({ page_id }: { page_id: string }) =>
+        page_id === "kept"
+          ? Promise.resolve(makePage("kept", "Kept"))
+          : Promise.reject(notFound()),
+    );
+    mockClient.databases.retrieve.mockRejectedValue(notFound());
+
+    const accessible = await checkNotionPageAccess("token", ["kept", "lost"]);
+
+    expect(accessible).toEqual(new Set(["kept"]));
+  });
+
+  it("counts a database source as accessible", async () => {
+    // listNotionItems offers databases as selectable roots, so a source's root
+    // can be one — and `pages.retrieve` fails for those.
+    mockClient.pages.retrieve.mockRejectedValue(notFound());
+    mockClient.databases.retrieve.mockResolvedValue({
+      object: "database",
+      data_sources: [],
+    });
+
+    const accessible = await checkNotionPageAccess("token", ["db"]);
+
+    expect(accessible).toEqual(new Set(["db"]));
+  });
+
+  it("makes no request for an empty id list", async () => {
+    const accessible = await checkNotionPageAccess("token", []);
+
+    expect(accessible).toEqual(new Set());
+    expect(mockClient.pages.retrieve).not.toHaveBeenCalled();
   });
 });

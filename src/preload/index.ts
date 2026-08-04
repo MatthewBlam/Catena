@@ -71,13 +71,18 @@ const api = {
       ipcRenderer.removeListener("answer:delta", handler);
     };
   },
-  startNotionOAuth: (): Promise<{ workspaceName: string }> =>
+  startNotionOAuth: (): Promise<import("../shared/types").NotionOAuthStarted> =>
     ipcRenderer.invoke("auth:notion-oauth-start"),
   cancelNotionOAuth: (): Promise<void> =>
     ipcRenderer.invoke("auth:notion-oauth-cancel"),
+  resolveNotionWorkspaceSwitch: (accept: boolean): Promise<void> =>
+    ipcRenderer.invoke("auth:notion-workspace-switch-resolve", accept),
+  checkNotionSourceAccess: (): Promise<
+    import("../shared/types").OrphanedNotionSource[]
+  > => ipcRenderer.invoke("notion:check-source-access"),
   listNotionPages: (): Promise<import("../shared/types").NotionItemSummary[]> =>
     ipcRenderer.invoke("notion:list-pages"),
-  startGoogleOAuth: (): Promise<{ email: string }> =>
+  startGoogleOAuth: (): Promise<import("../shared/types").GoogleOAuthStarted> =>
     ipcRenderer.invoke("auth:google-oauth-start"),
   cancelGoogleOAuth: (): Promise<void> =>
     ipcRenderer.invoke("auth:google-oauth-cancel"),

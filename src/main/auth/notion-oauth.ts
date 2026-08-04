@@ -14,6 +14,12 @@ const NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize";
 export interface NotionOAuthResult {
   accessToken: string;
   workspaceName: string;
+  /**
+   * Which Notion workspace the token belongs to. Null when Notion omits it —
+   * treated as "unknown", never as "changed", so a missing field can only ever
+   * skip the workspace-switch guard, not trigger it falsely.
+   */
+  workspaceId: string | null;
 }
 
 let activeServer: http.Server | null = null;
@@ -159,6 +165,7 @@ export async function startNotionOAuth(
         const data = (await tokenRes.json()) as {
           access_token?: string;
           workspace_name?: string;
+          workspace_id?: string;
         };
 
         if (!data.access_token) {
@@ -178,6 +185,7 @@ export async function startNotionOAuth(
         safeResolve({
           accessToken: data.access_token,
           workspaceName: data.workspace_name ?? "",
+          workspaceId: data.workspace_id ?? null,
         });
       } catch (err) {
         res.writeHead(500);

@@ -249,6 +249,69 @@ export interface NotionItemSummary {
 }
 
 /**
+ * The outcome of running the Notion OAuth flow — for a first connection or a
+ * re-run that widens which pages the integration may read.
+ *
+ * Notion grants access to a user-picked *set of pages*, so the only way to reach
+ * a page that was not ticked originally is to run the flow again; its picker
+ * pre-checks what is already shared, making re-auth additive.
+ */
+/**
+ * The outcome of running the Google OAuth flow.
+ *
+ * Unlike Notion, reconnecting Drive is routine and non-destructive: the scope is
+ * `drive.readonly` over the whole account, so a reconnect re-grants exactly what
+ * was granted before. The one exception is authorizing a *different* Google
+ * account, which leaves existing Drive sources pointing at folders the new token
+ * cannot see.
+ */
+export interface GoogleOAuthStarted {
+  email: string;
+  /**
+   * Set only when the authorized account differs from the one existing Drive
+   * sources were added under. Reported rather than blocked — the OAuth flow has
+   * already stored the tokens, and a reconnect is something the user asked for.
+   */
+  accountChanged?: {
+    previousEmail: string;
+    /** Drive sources bound to the previous account. Always >= 1. */
+    sourceCount: number;
+  };
+}
+
+/**
+ * A Notion source whose root page the current token can no longer read.
+ *
+ * Notion's OAuth picker *replaces* the granted page set rather than adding to
+ * it, and it opens with nothing pre-selected — so a re-authorization that misses
+ * a previously-granted page strands every source under it. Those sources go on
+ * looking healthy in the Sources tab and only fail at the next sync, which is
+ * why they have to be surfaced by name.
+ */
+export interface OrphanedNotionSource {
+  id: string;
+  name: string;
+}
+
+export interface NotionOAuthStarted {
+  workspaceName: string;
+  /**
+   * Set only when the flow authorized a *different* workspace than the one the
+   * existing Notion sources belong to — which would leave every one of them
+   * pointing at pages the new token cannot read. The new token is withheld
+   * (the current connection keeps working) until `resolveNotionWorkspaceSwitch`
+   * accepts or discards it. Absent on every ordinary connect and re-auth.
+   */
+  workspaceSwitch?: {
+    /** May be empty — Notion's `workspace_name` is nullable. */
+    previousName: string;
+    nextName: string;
+    /** Notion sources bound to the previous workspace. Always >= 1. */
+    sourceCount: number;
+  };
+}
+
+/**
  * Streamed progress of the managed-Ollama bootstrap (engine download/extract/
  * start, then model pull) and the optional chat-model pull. Mirrors
  * `SyncProgress`: one shape, broadcast on `ollama:progress`, with a `phase`
