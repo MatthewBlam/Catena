@@ -94,6 +94,12 @@ export interface AnswerCitation {
 export interface StoredAnswer {
   text: string;
   citations: AnswerCitation[];
+  /**
+   * The answer was generated with "Elaborate" ticked, which is what the badge on
+   * the answer card reports. Optional so rows written before the checkbox
+   * existed still parse — absent reads as false, which is what they were.
+   */
+  elaborate?: boolean;
 }
 
 /**
@@ -143,6 +149,12 @@ export interface AnswerRequest {
   docs: { chunkId: string; documentTitle: string }[];
   /** True when this is "Try again" after a failure, so recovery is measurable. */
   retry?: boolean;
+  /**
+   * The "Elaborate" checkbox was ticked: answer at length rather than concisely.
+   * Carried as a flag rather than folded into `query`, which has to stay the
+   * user's actual question — it keys the recent-search row and is shown back.
+   */
+  elaborate?: boolean;
 }
 
 /**

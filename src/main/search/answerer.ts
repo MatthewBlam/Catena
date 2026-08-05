@@ -28,6 +28,12 @@ interface GenerateOptions {
   onDelta: (text: string) => void;
   /** The Ollama chat model to use; the handler resolves it from settings. */
   ollamaChatModel?: string;
+  /**
+   * The user ticked "Elaborate": answer at length instead of concisely. Carried
+   * as a flag rather than appended to `query`, because the query keys the
+   * recent-search row the answer is saved against and is echoed back in the UI.
+   */
+  elaborate?: boolean;
 }
 
 // Cohere retired the bare `command-r` alias (it now 404s). `command-r-08-2024`
@@ -47,10 +53,32 @@ const MAX_DOC_CHARS = 2_000;
  */
 const ANSWER_TIMEOUT_MS = 120_000;
 
-const SYSTEM_PROMPT =
+const SYSTEM_PROMPT_GROUNDING =
   "You are a helpful assistant answering questions using ONLY the provided sources. " +
-  "If the sources do not contain the answer, say you couldn't find it in the connected documents. " +
+  "If the sources do not contain the answer, say you couldn't find it in the connected documents. ";
+
+/** The default: a short, extractive answer. */
+const CONCISE_CLAUSE =
   "Be concise and factual, and do not invent information that is not in the sources.";
+
+/**
+ * Swapped in for `CONCISE_CLAUSE` when the user ticks Elaborate — swapped, not
+ * appended, since "be concise" and "elaborate fully" are contradictory orders
+ * and leaving both in leaves the model to choose. The anti-padding sentence is
+ * load-bearing: told only to write more, a model will happily restate itself,
+ * which reads as a worse answer than the concise one it replaced.
+ */
+const ELABORATE_CLAUSE =
+  "Elaborate fully: give a thorough, well-structured answer that draws out every " +
+  "relevant detail the sources contain, including context and caveats. Stay factual " +
+  "and do not invent information that is not in the sources — the extra length must " +
+  "come from the sources, never from padding or repetition.";
+
+function systemPrompt(elaborate: boolean): string {
+  return (
+    SYSTEM_PROMPT_GROUNDING + (elaborate ? ELABORATE_CLAUSE : CONCISE_CLAUSE)
+  );
+}
 
 const FAILED_MESSAGE = "Couldn't generate an answer. Try again.";
 const EMPTY_MESSAGE = "No answer could be generated from your sources.";
@@ -203,7 +231,7 @@ async function generateWithCohere(
       model: COHERE_ANSWER_MODEL,
       stream: true,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt(opts.elaborate === true) },
         { role: "user", content: query },
       ],
       documents: docs.map((d) => ({
@@ -280,15 +308,24 @@ async function generateWithCohere(
  * The instruction is directive so a small model answers the question asked
  * instead of hedging or restating the source list.
  */
-function ollamaUserMessage(query: string, docs: AnswerDoc[]): string {
+function ollamaUserMessage(
+  query: string,
+  docs: AnswerDoc[],
+  elaborate: boolean,
+): string {
   const sources = docs
     .map((d) => `## ${docLabel(d)}\n${truncateDoc(d.text)}`)
     .join("\n\n");
+  // This instruction sits alongside the system prompt, so its length directive
+  // has to move with it — otherwise the two halves of one request disagree.
+  const style = elaborate
+    ? "Give a thorough, detailed answer in plain prose that covers every relevant " +
+      "detail the documents contain"
+    : "Give a direct, specific answer in plain prose";
   return (
-    "Answer the question using only the documents below. Give a direct, " +
-    "specific answer in plain prose, and do not add citation markers or " +
-    "source numbers. If the documents do not contain the answer, say so " +
-    `briefly.\n\n# Documents\n\n${sources}\n\n# Question\n${query}`
+    `Answer the question using only the documents below. ${style}, and do not ` +
+    "add citation markers or source numbers. If the documents do not contain " +
+    `the answer, say so briefly.\n\n# Documents\n\n${sources}\n\n# Question\n${query}`
   );
 }
 
@@ -311,6 +348,7 @@ async function generateWithOllama(
   opts: GenerateOptions,
 ): Promise<AnswerResponse> {
   const signal = withTimeout(opts.signal);
+  const elaborate = opts.elaborate === true;
 
   if (!(await ollamaHasModel(model, signal))) {
     return {
@@ -329,8 +367,8 @@ async function generateWithOllama(
       model,
       stream: true,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: ollamaUserMessage(query, docs) },
+        { role: "system", content: systemPrompt(elaborate) },
+        { role: "user", content: ollamaUserMessage(query, docs, elaborate) },
       ],
       // Ollama defaults to 0.8, which encourages a small model to ramble and
       // hedge over a grounded extraction. Pin it low for focused, factual answers.

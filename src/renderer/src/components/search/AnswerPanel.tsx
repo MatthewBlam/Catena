@@ -1,5 +1,7 @@
 import { SparklesIcon, SquareIcon, RotateCcwIcon } from "lucide-react";
 import { Button } from "@renderer/components/ui/button";
+import { Badge } from "@renderer/components/ui/badge";
+import { Checkbox } from "@renderer/components/ui/checkbox";
 import { OllamaChatModelButton } from "@renderer/components/setup/OllamaChatModelButton";
 import { openExternal } from "@renderer/lib/openExternal";
 import { reportCitationOpened } from "@renderer/lib/telemetry";
@@ -14,9 +16,18 @@ interface AnswerPanelProps {
   results: SearchResult[];
   error?: string;
   errorKind?: string;
+  /** The Elaborate checkbox's current value — an input to the *next* generation. */
+  elaborate: boolean;
+  /**
+   * Whether the answer currently on screen was generated with Elaborate on.
+   * Deliberately separate from `elaborate`: the badge describes the text the
+   * user is reading, which does not change when they retick the box afterwards.
+   */
+  elaborated: boolean;
   onGenerate: () => void;
   onStop: () => void;
   onRetry: () => void;
+  onElaborateChange: (next: boolean) => void;
 }
 
 /** A clickable citation marker `[n]` that opens its source document, if it has a url. */
@@ -113,9 +124,11 @@ function renderAnswerBody(
 function AnswerCard({
   children,
   action,
+  elaborated = false,
 }: {
   children: React.ReactNode;
   action?: React.ReactNode;
+  elaborated?: boolean;
 }): React.JSX.Element {
   return (
     <div className="rounded-lg border border-border bg-card p-4 space-y-2">
@@ -123,6 +136,11 @@ function AnswerCard({
         <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           <SparklesIcon className="size-4 text-muted-foreground" />
           Answer
+          {elaborated && (
+            <Badge variant="secondary" size="sm" className="ml-0.5">
+              Elaborate
+            </Badge>
+          )}
         </div>
         {action}
       </div>
@@ -138,17 +156,28 @@ export function AnswerPanel({
   results,
   error,
   errorKind,
+  elaborate,
+  elaborated,
   onGenerate,
   onStop,
   onRetry,
+  onElaborateChange,
 }: AnswerPanelProps): React.JSX.Element | null {
   if (status === "idle") {
     return (
-      <div>
+      <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={onGenerate}>
           <SparklesIcon />
           Generate answer
         </Button>
+        {/* Beside the button rather than inside the card, because it is an input
+            to the generation, not a property of one that already exists. */}
+        <Checkbox
+          checked={elaborate}
+          onChange={() => onElaborateChange(!elaborate)}
+          label="Elaborate"
+          className="rounded-md px-1 py-1 text-sm text-muted-foreground hover:text-foreground"
+        />
       </div>
     );
   }
@@ -156,6 +185,7 @@ export function AnswerPanel({
   if (status === "streaming") {
     return (
       <AnswerCard
+        elaborated={elaborated}
         action={
           <Button variant="ghost" size="xs" onClick={onStop}>
             <SquareIcon />
@@ -202,7 +232,7 @@ export function AnswerPanel({
 
   // done
   return (
-    <AnswerCard>
+    <AnswerCard elaborated={elaborated}>
       <p className="text-sm text-foreground leading-relaxed select-text whitespace-pre-wrap">
         {renderAnswerBody(text, citations, results)}
       </p>

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, win32 as pathWin32, posix as pathPosix } from "node:path";
 import { app } from "electron";
 
 /**
@@ -54,6 +54,77 @@ export function resolveAsset(
     archiveName,
     url: `https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/${archiveName}`,
   };
+}
+
+/** The engine executable's filename on a platform. */
+export function ollamaExecutableName(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === "win32" ? "ollama.exe" : "ollama";
+}
+
+/**
+ * Every path an Ollama the *user* installed could plausibly live at, in priority
+ * order: explicit install locations first, then each PATH entry.
+ *
+ * Probing these before downloading is what keeps a second 146 MB engine off the
+ * disk of someone who already has Ollama — the running-engine check only helps
+ * when it happens to be running, and on macOS it is a menu-bar app people quit.
+ *
+ * Platform and env are parameters, not globals, so the Windows layout can be
+ * verified from a macOS test run and vice versa — including path separators and
+ * the PATH delimiter, which is why this uses `path.win32`/`path.posix` rather
+ * than the host's `join`. Nothing here touches the filesystem; the caller
+ * decides which candidates actually exist.
+ */
+export function systemInstallCandidates(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const isWindows = platform === "win32";
+  const p = isWindows ? pathWin32 : pathPosix;
+  const exe = ollamaExecutableName(platform);
+  const candidates: string[] = [];
+
+  if (platform === "darwin") {
+    candidates.push(
+      p.join("/usr/local/bin", exe),
+      p.join("/opt/homebrew/bin", exe),
+      // The official app has shipped the CLI at both of these across versions.
+      p.join("/Applications/Ollama.app/Contents/Resources", exe),
+      p.join("/Applications/Ollama.app/Contents/MacOS", exe),
+    );
+    if (env.HOME) {
+      candidates.push(
+        p.join(env.HOME, "Applications/Ollama.app/Contents/Resources", exe),
+        p.join(env.HOME, "Applications/Ollama.app/Contents/MacOS", exe),
+      );
+    }
+  } else if (isWindows) {
+    if (env.LOCALAPPDATA) {
+      candidates.push(p.join(env.LOCALAPPDATA, "Programs", "Ollama", exe));
+    }
+    if (env.ProgramFiles) {
+      candidates.push(p.join(env.ProgramFiles, "Ollama", exe));
+    }
+  } else {
+    // Linux: `resolveAsset` refuses to auto-install here, but an Ollama the user
+    // installed themselves works perfectly well — so look for it rather than
+    // dead-ending them.
+    candidates.push(p.join("/usr/local/bin", exe), p.join("/usr/bin", exe));
+  }
+
+  // PATH last: an install in a known location is a stronger signal than
+  // whatever a shell happens to expose. Windows uses `;`, everyone else `:` —
+  // taken from the requested platform, not the host's `path.delimiter`.
+  const pathVar = env.PATH ?? env.Path;
+  if (pathVar) {
+    for (const dir of pathVar.split(isWindows ? ";" : ":")) {
+      if (dir.trim()) candidates.push(p.join(dir, exe));
+    }
+  }
+
+  return [...new Set(candidates)];
 }
 
 /** The directory our managed engine lives in, under Electron's userData. */

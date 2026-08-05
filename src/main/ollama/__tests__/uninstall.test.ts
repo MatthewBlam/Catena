@@ -22,6 +22,11 @@ vi.mock("node:fs/promises", () => ({ rm: vi.fn(async () => {}) }));
 vi.mock("../../db/singleton", () => ({ getDb: vi.fn(() => ({})) }));
 vi.mock("../../db/database", () => ({ deleteSetting: vi.fn() }));
 
+vi.mock("../pulled-models", () => ({
+  readPulledModels: vi.fn(() => null),
+  clearPulledModels: vi.fn(),
+}));
+
 import { uninstallOllama } from "../uninstall";
 import { EMBED_MODEL, CHAT_MODEL, ollamaDir } from "../platform";
 import {
@@ -33,6 +38,7 @@ import {
 import { deleteModel } from "../models";
 import { rm } from "node:fs/promises";
 import { deleteSetting } from "../../db/database";
+import { readPulledModels, clearPulledModels } from "../pulled-models";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,6 +46,7 @@ beforeEach(() => {
   vi.mocked(managedBinaryExists).mockReturnValue(true);
   vi.mocked(deleteModel).mockResolvedValue(undefined);
   vi.mocked(ensureEngine).mockResolvedValue(undefined);
+  vi.mocked(readPulledModels).mockReturnValue(null);
 });
 
 describe("uninstallOllama", () => {
@@ -106,5 +113,50 @@ describe("uninstallOllama", () => {
     expect(deleteModel).not.toHaveBeenCalled();
     expect(rm).toHaveBeenCalledTimes(1);
     expect(deleteSetting).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("uninstallOllama — model provenance", () => {
+  it("deletes only the models Catena pulled itself", async () => {
+    // The model store is shared with a user's own Ollama, so a model we merely
+    // found and reused is theirs — deleting it would destroy their data.
+    vi.mocked(readPulledModels).mockReturnValue([EMBED_MODEL]);
+
+    await uninstallOllama();
+
+    expect(deleteModel).toHaveBeenCalledWith(EMBED_MODEL, undefined);
+    expect(deleteModel).not.toHaveBeenCalledWith(CHAT_MODEL, undefined);
+  });
+
+  it("deletes nothing when it pulled nothing", async () => {
+    vi.mocked(readPulledModels).mockReturnValue([]);
+
+    await uninstallOllama();
+
+    expect(deleteModel).not.toHaveBeenCalled();
+    // The binary and settings still go — only the shared models are spared.
+    expect(rm).toHaveBeenCalledWith(ollamaDir(), {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("falls back to the defaults for an install predating provenance tracking", async () => {
+    // `null` = unknown. Behaving exactly as the previous version did is the only
+    // choice that cannot regress those users into a 2 GB orphaned store.
+    vi.mocked(readPulledModels).mockReturnValue(null);
+
+    await uninstallOllama();
+
+    expect(deleteModel).toHaveBeenCalledWith(EMBED_MODEL, undefined);
+    expect(deleteModel).toHaveBeenCalledWith(CHAT_MODEL, undefined);
+  });
+
+  it("clears the provenance record so a reinstall starts clean", async () => {
+    vi.mocked(readPulledModels).mockReturnValue([EMBED_MODEL]);
+
+    await uninstallOllama();
+
+    expect(clearPulledModels).toHaveBeenCalled();
   });
 });

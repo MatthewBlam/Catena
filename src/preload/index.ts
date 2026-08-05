@@ -57,6 +57,8 @@ const api = {
   ): Promise<void> => ipcRenderer.invoke("answer:cancel", reason),
   reportCitationOpened: (position: number): Promise<void> =>
     ipcRenderer.invoke("answer:citation-opened", position),
+  reportElaborateToggled: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke("answer:elaborate-toggled", enabled),
   onAnswerDelta: (
     callback: (delta: import("../shared/types").AnswerDelta) => void,
   ): (() => void) => {

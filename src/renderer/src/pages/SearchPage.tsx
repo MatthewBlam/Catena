@@ -9,6 +9,7 @@ import { Button } from "@renderer/components/ui/button";
 import { getOllamaStatus } from "@renderer/lib/ollama";
 import { debounce } from "@renderer/lib/utils";
 import { toErrorMessage } from "@renderer/lib/errors";
+import { reportElaborateToggled } from "@renderer/lib/telemetry";
 import { formatRelativeTime } from "@renderer/lib/format";
 import type {
   SearchResult,
@@ -23,9 +24,19 @@ interface AnswerState {
   citations: AnswerCitation[];
   error?: string;
   errorKind?: string;
+  /**
+   * This answer was generated with Elaborate on — a property of the text on
+   * screen, captured when the generation started, not the live checkbox.
+   */
+  elaborated: boolean;
 }
 
-const IDLE_ANSWER: AnswerState = { status: "idle", text: "", citations: [] };
+const IDLE_ANSWER: AnswerState = {
+  status: "idle",
+  text: "",
+  citations: [],
+  elaborated: false,
+};
 
 interface SearchPageProps {
   visible: boolean;
@@ -70,6 +81,9 @@ export function SearchPage({
   // is never unmounted while navigating) so a stream started on Search keeps
   // filling in even while the user is on another tab.
   const [answer, setAnswer] = useState<AnswerState>(IDLE_ANSWER);
+  // Sticky for the session: someone who wants long answers usually wants the
+  // next one too, and a new search does not reset it.
+  const [elaborate, setElaborate] = useState(false);
   const queryRef = useRef(query);
   const providerReadyRef = useRef<boolean | null>(null);
   const requestIdRef = useRef(0);
@@ -237,7 +251,14 @@ export function SearchPage({
     window.api.cancelAnswer().catch(() => {});
     setAnswer(
       d.answer
-        ? { status: "done", text: d.answer.text, citations: d.answer.citations }
+        ? {
+            status: "done",
+            text: d.answer.text,
+            citations: d.answer.citations,
+            // Absent on rows written before the checkbox existed, which were
+            // never elaborated — so the fallback is the truth, not a guess.
+            elaborated: d.answer.elaborate === true,
+          }
         : IDLE_ANSWER,
     );
   }, [restore]);
@@ -305,7 +326,15 @@ export function SearchPage({
     async (retry: boolean) => {
       if (!results || results.length === 0) return;
       const rid = ++answerReqIdRef.current;
-      setAnswer({ status: "streaming", text: "", citations: [] });
+      // Read once, here, so the badge and the request can never disagree even if
+      // the box is toggled while this generation is still streaming.
+      const withElaborate = elaborate;
+      setAnswer({
+        status: "streaming",
+        text: "",
+        citations: [],
+        elaborated: withElaborate,
+      });
       // Send the query the results belong to (not the edited input), and title-only
       // docs — main re-fetches the authoritative chunk text by id.
       const docs = results.map((r) => ({
@@ -318,6 +347,7 @@ export function SearchPage({
           requestId: rid,
           docs,
           retry,
+          elaborate: withElaborate,
         });
         // A superseded (or user-cancelled) generation is dropped: the newer request,
         // or the Stop handler, already owns the answer state.
@@ -327,6 +357,7 @@ export function SearchPage({
             status: "error",
             text: "",
             citations: [],
+            elaborated: withElaborate,
             error: res.error,
             errorKind: res.errorKind,
           });
@@ -335,6 +366,7 @@ export function SearchPage({
             status: "done",
             text: res.text,
             citations: res.citations,
+            elaborated: withElaborate,
           });
         }
       } catch {
@@ -343,12 +375,13 @@ export function SearchPage({
           status: "error",
           text: "",
           citations: [],
+          elaborated: withElaborate,
           error: "Couldn't generate an answer. Try again.",
           errorKind: "failed",
         });
       }
     },
-    [results, lastQuery],
+    [results, lastQuery, elaborate],
   );
 
   // Two entry points into the same generation, kept separate so the retry flag is
@@ -362,6 +395,13 @@ export function SearchPage({
     () => generateAnswer(true),
     [generateAnswer],
   );
+
+  const handleElaborateChange = useCallback((next: boolean) => {
+    setElaborate(next);
+    // Fire-and-forget, and reported here rather than at generation time so
+    // ticking the box and then walking away is still visible.
+    reportElaborateToggled(next);
+  }, []);
 
   const handleStopAnswer = useCallback(() => {
     // Bump the token so the in-flight resolve and any late deltas are dropped,
@@ -481,9 +521,12 @@ export function SearchPage({
             results={results}
             error={answer.error}
             errorKind={answer.errorKind}
+            elaborate={elaborate}
+            elaborated={answer.elaborated}
             onGenerate={handleGenerateAnswer}
             onStop={handleStopAnswer}
             onRetry={handleRetryAnswer}
+            onElaborateChange={handleElaborateChange}
           />
         )}
 

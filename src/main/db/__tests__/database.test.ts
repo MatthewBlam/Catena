@@ -1113,6 +1113,21 @@ describe("recent searches", () => {
     expect(detail?.updatedAt).toBe("2024-01-01T00:00:00.000Z");
   });
 
+  it("updateRecentSearchAnswer round-trips the elaborate flag", () => {
+    // The badge on a restored answer is read straight off this, so it has to
+    // survive the JSON snapshot rather than be reconstructed from the checkbox.
+    upsertRecentSearch(db, "why", makeSnapshot(1), "2024-01-01T00:00:00.000Z");
+    const row = listRecentSearches(db)[0];
+
+    updateRecentSearchAnswer(db, "why", {
+      text: "A long answer.",
+      citations: [],
+      elaborate: true,
+    });
+
+    expect(getRecentSearchById(db, row.id)?.answer?.elaborate).toBe(true);
+  });
+
   it("updateRecentSearchAnswer is a no-op when no row matches the query", () => {
     // No throw, nothing created — the row was evicted between search and answer.
     expect(() =>

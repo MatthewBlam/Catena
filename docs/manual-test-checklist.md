@@ -30,6 +30,34 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/ca
 - [ ] Pasting a valid key shows a green success message and advances
 - [ ] The "dashboard.cohere.com" link ("Get a free API key at …") opens in the default browser
 
+### Ollama Engine Detection (run on both macOS and Windows)
+
+Ollama's model store (`~/.ollama/models`, `%USERPROFILE%\.ollama\models`) is
+shared between a user's own install and Catena's managed one, so models are never
+duplicated. The engine binary is what Catena must avoid re-downloading.
+
+- [ ] **Already running** → setup reuses it: no `downloading-engine` phase, no spawn. Quitting Catena leaves it running
+- [ ] **Installed but NOT running** → setup starts the existing binary; still no `downloading-engine` phase - macOS: `/Applications/Ollama.app`, `/usr/local/bin/ollama`, `/opt/homebrew/bin/ollama` - Windows: `%LOCALAPPDATA%\Programs\Ollama\ollama.exe` - Console logs `Using the Ollama already installed at <path>`
+- [ ] **Not installed at all** → downloads (~146 MB), extracts, starts
+- [ ] After that download, **no `.tgz`/`.zip` remains** in `<userData>/ollama` — only the binary and its libraries
+- [ ] Re-running setup with a managed binary present also clears any archive left by an older build
+- [ ] With only a _user_ install and no managed binary, Settings shows Uninstall enabled only while the engine is up (`managedBinaryPresent` stays false — uninstall must never claim to remove someone else's install)
+
+### Model Pulls Are Never Duplicated
+
+- [ ] Pull `nomic-embed-text` yourself (`ollama pull nomic-embed-text`), then run Catena setup → **no pull happens**, setup completes immediately
+- [ ] With no models present, setup pulls only the embedding model
+- [ ] "Install a chat model" with `llama3.2` already present → completes instantly with no pull (works with networking off)
+- [ ] With `llama3.2` absent, it pulls normally
+
+### Uninstall Only Removes What Catena Pulled
+
+- [ ] Pull `nomic-embed-text` yourself → set up Catena (reuses it) → Uninstall Ollama → **your model is still there** (`ollama list`)
+- [ ] Let Catena pull both models → Uninstall → both are gone
+- [ ] Mixed: you pulled the embed model, Catena pulled the chat model → Uninstall removes only `llama3.2`
+- [ ] After any uninstall, `<userData>/ollama` is gone and a user's own install is untouched
+- [ ] Upgrading from a build that predates this: the first uninstall still removes both defaults (no orphaned 2 GB store)
+
 ### Provider Step -- Ollama
 
 - [ ] Clicking "Use Ollama (Local)" checks Ollama availability
@@ -96,6 +124,21 @@ rm "$(electron -e "console.log(require('electron').app.getPath('userData'))")/ca
 
 - [ ] If documents were embedded with a different model than the current provider, a dismissible warning appears
 - [ ] Dismissing the warning hides it for the session
+
+### AI Answers — Elaborate
+
+- [ ] An "Elaborate" checkbox sits beside **Generate answer**, unticked by default
+- [ ] Tab reaches it as a single control named "Elaborate"; Space/Enter toggles it
+- [ ] Generating with it unticked produces the usual short answer, and the answer card shows **no** badge
+- [ ] Ticking it and generating produces a visibly longer answer, and the card shows an "Elaborate" badge next to the "Answer" heading
+- [ ] The badge is present while the answer is still streaming, not only once it finishes
+- [ ] Works on both providers (Cohere and Ollama) — the local model's answer lengthens too
+- [ ] Toggling the box mid-stream does not change the badge on the answer already generating
+- [ ] The box stays ticked across searches within a session (it is a preference, not a per-search reset)
+- [ ] After a failure, **Try again** keeps the same Elaborate setting
+- [ ] Restore an elaborated answer from Recents → the badge comes back with it
+- [ ] Restore an answer generated **before** this feature shipped → no badge, no crash
+- [ ] The question shown under the results ("Results for …") is unchanged — the word "Elaborate" never leaks into the query
 
 ### Recents
 

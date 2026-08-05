@@ -59,6 +59,8 @@ interface CatenaAPI {
   ): Promise<void>;
   /** Reports that a citation marker was clicked, by its 1-based rank. */
   reportCitationOpened(position: number): Promise<void>;
+  /** Reports that the "Elaborate" checkbox was ticked or unticked. */
+  reportElaborateToggled(enabled: boolean): Promise<void>;
   /** Streams answer tokens; each delta carries the request id it belongs to. */
   onAnswerDelta(
     callback: (delta: import("../shared/types").AnswerDelta) => void,

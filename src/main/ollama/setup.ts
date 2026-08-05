@@ -4,6 +4,7 @@ import { upsertSetting, getSetting } from "../db/database";
 import { EMBED_MODEL, CHAT_MODEL } from "./platform";
 import { ensureEngine, isEngineUp, managedBinaryExists } from "./runtime";
 import { listModels, hasModel, pullModel, isEmbeddingModel } from "./models";
+import { recordPulledModel, ensurePulledModelsRecord } from "./pulled-models";
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new Error("Setup aborted");
@@ -43,12 +44,20 @@ export async function runSetup(
   await ensureEngine(onProgress, signal);
   throwIfAborted(signal);
 
+  const db = getDb();
+  // Before the pull decision, not after: if every model turns out to be present
+  // we pull nothing, and an absent record would then read as "legacy install" —
+  // which uninstall answers by deleting the defaults, i.e. the user's own models.
+  ensurePulledModelsRecord(db);
+
   if (!(await hasModel(EMBED_MODEL, signal))) {
     onProgress({ phase: "pulling-model", model: EMBED_MODEL, percent: 0 });
     await pullModel(EMBED_MODEL, pullReporter(EMBED_MODEL, onProgress), signal);
+    // Only what we actually downloaded — the model store is shared, so a model
+    // that was already there belongs to the user and uninstall must not take it.
+    recordPulledModel(db, EMBED_MODEL);
   }
 
-  const db = getDb();
   upsertSetting(db, "embedding_provider", "ollama");
   upsertSetting(db, "ollama_model", EMBED_MODEL);
   onProgress({ phase: "ready" });
@@ -66,10 +75,19 @@ export async function pullChatModel(
   await ensureEngine(onProgress, signal);
   throwIfAborted(signal);
 
-  onProgress({ phase: "pulling-model", model: CHAT_MODEL, percent: 0 });
-  await pullModel(CHAT_MODEL, pullReporter(CHAT_MODEL, onProgress), signal);
+  const db = getDb();
+  ensurePulledModelsRecord(db);
 
-  upsertSetting(getDb(), "ollama_chat_model", CHAT_MODEL);
+  // Guarded like `runSetup`. Ollama would not re-download existing blobs, but it
+  // still fetches the manifest — so without this, a user who already has the
+  // model fails here with no network instead of succeeding instantly.
+  if (!(await hasModel(CHAT_MODEL, signal))) {
+    onProgress({ phase: "pulling-model", model: CHAT_MODEL, percent: 0 });
+    await pullModel(CHAT_MODEL, pullReporter(CHAT_MODEL, onProgress), signal);
+    recordPulledModel(db, CHAT_MODEL);
+  }
+
+  upsertSetting(db, "ollama_chat_model", CHAT_MODEL);
   onProgress({ phase: "ready" });
 }
 

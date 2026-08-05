@@ -1,6 +1,6 @@
 # Catena Analytics
 
-Everything Catena reports to PostHog: all 18 events with their exact properties,
+Everything Catena reports to PostHog: all 19 events with their exact properties,
 how to fire each one by hand so it registers, and which dashboards to build from
 them.
 
@@ -27,10 +27,11 @@ client; `track(event, properties)` is the only way to send anything.
   "Clear all data."
 - **No renderer bridge.** The renderer cannot send arbitrary events. Main exposes
   one narrow IPC channel per interaction it wants to hear about
-  (`answer:citation-opened` is the only one today), and
-  `src/renderer/src/lib/telemetry.ts` is the renderer half. This is deliberate: a
-  general "send any event" bridge is a hole through which query text could
-  eventually leak.
+  (`answer:citation-opened` and `answer:elaborate-toggled` are the only two
+  today), and `src/renderer/src/lib/telemetry.ts` is the renderer half. This is
+  deliberate: a general "send any event" bridge is a hole through which query
+  text could eventually leak. Each channel takes one scalar and validates it, so
+  a compromised renderer cannot invent events or attach properties.
 - **Buffering:** `flushAt: 10`, `flushInterval: 30_000`. Events flush on
   `will-quit` with a 2s bound. **Quit the app to force a flush.**
 - **The key:** events only leave the machine when `POSTHOG_API_KEY` is set. It is
@@ -47,7 +48,7 @@ anything it produced.
 
 ## 2. The event catalogue
 
-18 events, grouped by area.
+19 events, grouped by area.
 
 ### 2.1 Lifecycle
 
@@ -102,7 +103,8 @@ User clicks "Generate answer"
    │      └─ catena_answer_generated  ◄── success AND failure both land here
    │
    ├─► answer:cancel ("user_stop")  └─ catena_answer_cancelled
-   └─► answer:citation-opened       └─ catena_answer_citation_opened
+   ├─► answer:citation-opened       └─ catena_answer_citation_opened
+   └─► answer:elaborate-toggled     └─ catena_answer_elaborate_toggled
 ```
 
 Two things this shape buys you:
@@ -123,6 +125,7 @@ Two things this shape buys you:
 | `answer_model`       | `string`  | `command-r-08-2024`, `llama3.2`, …      |
 | `doc_count`          | `number`  | Sources the renderer asked to ground on |
 | `retry`              | `boolean` | True when it came from **Try again**    |
+| `elaborate`          | `boolean` | The **Elaborate** checkbox was ticked   |
 
 #### `catena_answer_generated`
 
@@ -140,6 +143,7 @@ Fired when a generation settles — **success and failure both**, distinguished 
 | `error_kind`         | `string \| null` | `failed`, `no_model`, or null. Drives what the UI renders |
 | `failure_reason`     | `string \| null` | The diagnosis — see §2.4                                  |
 | `retry`              | `boolean`        |                                                           |
+| `elaborate`          | `boolean`        | Long-form answer requested — see §2.3.1                   |
 | `doc_count`          | `number`         | Sources requested                                         |
 | `docs_dropped`       | `number`         | Requested minus what survived the re-fetch. Should be 0   |
 
@@ -153,6 +157,7 @@ Fired only when the user presses **Stop**.
 | `answer_model`       | `string`         |                                              |
 | `doc_count`          | `number`         |                                              |
 | `retry`              | `boolean`        |                                              |
+| `elaborate`          | `boolean`        |                                              |
 | `elapsed_ms`         | `number`         | How long it ran before the stop              |
 | `first_token_ms`     | `number \| null` |                                              |
 | `streamed_chars`     | `number`         | How much the user had seen                   |
@@ -160,6 +165,31 @@ Fired only when the user presses **Stop**.
 
 `streamed` is the interesting one. `false` is impatience with the wait; `true` is
 a judgement on the answer itself. They call for opposite fixes.
+
+### 2.3.1 The Elaborate checkbox
+
+Ticking **Elaborate** beside _Generate answer_ swaps the "be concise" clause of
+the system prompt for an "answer thoroughly" one — the question itself is never
+touched, since it keys the recent-search row the answer is saved against.
+
+It is measured twice, deliberately:
+
+- **`elaborate` on the three answer events** covers the generations that ran, so
+  latency, answer length, and abandonment can be compared between the two modes.
+  This is the property that answers "is the long answer worth it."
+- **`catena_answer_elaborate_toggled`** covers the intent, including the user who
+  ticks the box and then never generates — invisible to the property above.
+
+The flag is captured when the generation starts, not read live, so a box toggled
+mid-stream cannot mislabel the answer it is already producing. It is also stored
+alongside the answer in the recent-search snapshot, which is what re-badges a
+restored answer.
+
+#### `catena_answer_elaborate_toggled`
+
+| Property  | Type      | Notes                   |
+| --------- | --------- | ----------------------- |
+| `enabled` | `boolean` | The box's **new** state |
 
 #### `catena_answer_citation_opened`
 
@@ -262,7 +292,7 @@ success-rate measure. A cancel or failure emits `started` with no `completed`.
 
 ---
 
-## 3. Firing all 18 events once
+## 3. Firing all 19 events once
 
 New event names only appear in PostHog's autocomplete **after they have been
 ingested at least once**. Do this pass first, then build the dashboards in §4.
@@ -289,15 +319,17 @@ at the end** to force a flush (`flushAt: 10`, `flushInterval: 30s`).
 | 12  | `catena_answer_requested` + `catena_answer_generated`       | Click **Generate answer**, let it finish                                    |
 | 13  | `catena_answer_cancelled`                                   | Generate again → click **Stop** mid-stream                                  |
 | 14  | `catena_answer_citation_opened`                             | On a **Cohere** answer, click a `[1]` marker                                |
-| 15  | `catena_ollama_uninstall_started` + `_completed`            | Settings → remove the managed Ollama                                        |
-| 16  | `catena_source_removed`                                     | Sources → remove a source                                                   |
-| 17  | `catena_data_cleared`                                       | Settings → Clear all data — **destructive, do this last**                   |
+| 15  | `catena_answer_elaborate_toggled`                           | Tick the **Elaborate** box beside _Generate answer_ (then untick it)        |
+| 16  | `catena_ollama_uninstall_started` + `_completed`            | Settings → remove the managed Ollama                                        |
+| 17  | `catena_source_removed`                                     | Sources → remove a source                                                   |
+| 18  | `catena_data_cleared`                                       | Settings → Clear all data — **destructive, do this last**                   |
 
 ### Firing the interesting property values
 
 | Value                             | How                                                                    |
 | --------------------------------- | ---------------------------------------------------------------------- |
 | `retry: true`                     | Cause any answer failure, then click **Try again**                     |
+| `elaborate: true`                 | Tick **Elaborate**, then generate                                      |
 | `streamed: false` (cancelled)     | Click **Stop** before the first word appears                           |
 | `streamed: true` (cancelled)      | Click **Stop** after text starts appearing                             |
 | `failure_reason: unauthorized`    | Save a garbage Cohere key, then generate                               |
@@ -374,6 +406,10 @@ download or extraction bug would surface first.
 | **Citation follow rate**   | Trends | Formula: `catena_answer_citation_opened` ÷ `catena_answer_generated`                                               |
 | **Citation depth**         | Trends | `catena_answer_citation_opened`, **breakdown by `position`**                                                       |
 | **Retry recovery**         | Trends | `catena_answer_generated`, filter `retry = true`, **breakdown by `error_kind`**                                    |
+| **Elaborate adoption**     | Trends | Formula: `catena_answer_generated where elaborate = true` ÷ all `catena_answer_generated`                          |
+| **Elaborate cost**         | Trends | `catena_answer_generated`, **P50 `answer_chars`** and **P90 `duration_ms`**, both broken down by `elaborate`       |
+| **Elaborate abandonment**  | Trends | `catena_answer_cancelled`, **breakdown by `elaborate`**; compare against the adoption rate above                   |
+| **Elaborate intent gap**   | Trends | Formula: `catena_answer_elaborate_toggled where enabled = true` ÷ `catena_answer_requested where elaborate = true` |
 | **Empty-result rate**      | Trends | Formula: `catena_search_executed where result_count = 0` ÷ all `catena_search_executed`                            |
 | **Degraded search**        | Trends | `catena_search_executed`, two series filtered on `rerank_failed = true` and `query_rewritten = true`               |
 | **Search latency**         | Trends | `catena_search_executed`, **P90 `duration_ms`**, breakdown by `embedding_provider`                                 |
@@ -396,6 +432,13 @@ Notes on the ones that aren't obvious:
   signal available without a thumbs up/down.
 - **Empty-result rate** is a retrieval problem, not an answer problem — if it
   rises, look at chunking and embedding health before touching the answerer.
+- **Elaborate cost** is the pair to watch together. A long answer that takes
+  three times as long is only worth it if `catena_answer_cancelled` where
+  `elaborate = true` does not rise in step — if it does, the wait is losing the
+  people the length was meant to serve.
+- **Elaborate intent gap** above 1 means people tick the box and then don't
+  generate. A small gap is idle curiosity; a large one says the checkbox is
+  being read as a promise the button never delivers on.
 
 ### 4.4 Dashboard D — Sync Reliability
 
@@ -454,8 +497,9 @@ divergence in the started → completed funnel.
 | Failure-reason mapping             | `src/main/search/answerer.ts`                        |
 | Shared types & doc comments        | `src/shared/types.ts`                                |
 | Renderer half of citation tracking | `src/renderer/src/lib/telemetry.ts`                  |
-| Stop / retry wiring                | `src/renderer/src/pages/SearchPage.tsx`              |
-| Citation markers                   | `src/renderer/src/components/search/AnswerPanel.tsx` |
+| Stop / retry / Elaborate wiring    | `src/renderer/src/pages/SearchPage.tsx`              |
+| Citation markers, Elaborate box    | `src/renderer/src/components/search/AnswerPanel.tsx` |
+| Elaborate prompt swap              | `src/main/search/answerer.ts`                        |
 | Handler tests                      | `src/main/ipc/__tests__/answer-handlers.test.ts`     |
 | Failure-reason tests               | `src/main/search/__tests__/answerer.test.ts`         |
 

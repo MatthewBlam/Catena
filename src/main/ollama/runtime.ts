@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, chmodSync, readdirSync } from "node:fs";
+import { existsSync, chmodSync, readdirSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { OllamaProgress } from "../../shared/types";
 import {
@@ -8,11 +9,14 @@ import {
   resolveAsset,
   ollamaDir,
   binaryPath,
+  systemInstallCandidates,
 } from "./platform";
 import { downloadWithProgress, extractArchive } from "./download";
 
-// The engine we spawned, if any, plus whether this process owns it. A reused
-// system/manual Ollama is never `ownedByUs`, so we never kill it on quit.
+// The engine we spawned, if any, plus whether this process owns it. An engine
+// that was *already running* when we looked is never `ownedByUs`, so we never
+// kill it on quit. (A user's own binary that we started ourselves is a process
+// we created, so that one we do stop.)
 let child: ChildProcess | null = null;
 let ownedByUs = false;
 
@@ -46,14 +50,39 @@ export function isEngineOwned(): boolean {
  * anything to uninstall even when the engine is not running.
  */
 export function managedBinaryExists(): boolean {
-  return findExecutable() !== null;
+  return findManagedExecutable() !== null;
+}
+
+/** True if `path` is an existing regular file (not a directory of that name). */
+function isFile(path: string): boolean {
+  try {
+    return existsSync(path) && statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An Ollama the *user* installed, if there is one.
+ *
+ * Deliberately separate from `findManagedExecutable`: `managedBinaryExists` (and
+ * through it the "Uninstall Ollama" button and `managedBinaryPresent` status)
+ * must only ever answer for the binary under `<userData>/ollama`, since that is
+ * the only thing uninstall deletes. Folding a user's install into that answer
+ * would offer an uninstall that silently removes nothing.
+ */
+function findSystemExecutable(): string | null {
+  for (const candidate of systemInstallCandidates()) {
+    if (isFile(candidate)) return candidate;
+  }
+  return null;
 }
 
 /**
  * Locates the extracted engine executable. Checks the expected path first, then
  * scans one directory level deep — some archives nest the binary under a folder.
  */
-function findExecutable(): string | null {
+function findManagedExecutable(): string | null {
   const expected = binaryPath();
   if (existsSync(expected)) return expected;
 
@@ -71,15 +100,49 @@ function findExecutable(): string | null {
 }
 
 /**
- * Ensures the engine binary exists on disk, downloading + extracting the pinned
- * release archive if it doesn't. Returns the executable path.
+ * Deletes the downloaded release archive, which is ~139 MB of dead weight the
+ * moment it has been extracted.
+ *
+ * Called on the download path *and* whenever an existing managed binary is
+ * reused, because installs made before this cleanup existed still have the
+ * archive sitting beside the binary and would otherwise never reach the code
+ * that removes it.
+ *
+ * Entirely best-effort: `resolveAsset` throws on platforms we cannot install on,
+ * and a locked file on Windows should not fail a setup that has succeeded.
+ */
+async function discardArchive(): Promise<void> {
+  try {
+    await rm(join(ollamaDir(), resolveAsset().archiveName), { force: true });
+  } catch (err) {
+    console.warn("Could not remove the Ollama release archive:", err);
+  }
+}
+
+/**
+ * Resolves an engine executable, in priority order:
+ *   1. our managed binary, if a previous run already downloaded it;
+ *   2. an Ollama the user installed themselves;
+ *   3. the pinned release, downloaded and extracted.
+ *
+ * Managed before system so this change is strictly additive — an install that
+ * already has a managed binary keeps using exactly the one it always did.
  */
 async function ensureBinary(
   onProgress: (p: OllamaProgress) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const existing = findExecutable();
-  if (existing) return existing;
+  const managed = findManagedExecutable();
+  if (managed) {
+    await discardArchive();
+    return managed;
+  }
+
+  const system = findSystemExecutable();
+  if (system) {
+    console.log(`Using the Ollama already installed at ${system}`);
+    return system;
+  }
 
   const asset = resolveAsset();
   const archivePath = join(ollamaDir(), asset.archiveName);
@@ -101,7 +164,9 @@ async function ensureBinary(
   onProgress({ phase: "extracting" });
   await extractArchive(archivePath, ollamaDir());
 
-  const bin = findExecutable();
+  await discardArchive();
+
+  const bin = findManagedExecutable();
   if (!bin) {
     throw new Error(
       "Downloaded Ollama but could not find its executable after extraction.",

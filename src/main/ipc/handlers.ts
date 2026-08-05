@@ -108,6 +108,8 @@ interface AnswerRun {
   provider: string;
   docCount: number;
   retry: boolean;
+  /** The "Elaborate" checkbox was ticked for this generation. */
+  elaborate: boolean;
 }
 
 /**
@@ -498,6 +500,7 @@ export function registerIpcHandlers(): void {
       provider: embedConfig.provider,
       docCount: request.docs.length,
       retry: request.retry === true,
+      elaborate: request.elaborate === true,
     };
     activeAnswers.set(senderId, run);
 
@@ -509,6 +512,7 @@ export function registerIpcHandlers(): void {
       answer_model: run.model,
       doc_count: run.docCount,
       retry: run.retry,
+      elaborate: run.elaborate,
     });
 
     try {
@@ -558,6 +562,7 @@ export function registerIpcHandlers(): void {
         // Resolved above so telemetry can name the model; the Cohere path has its
         // own constant and ignores this, so only pass it where it means something.
         ollamaChatModel: embedConfig.provider === "ollama" ? model : undefined,
+        elaborate: run.elaborate,
       });
 
       // Persist only a real, completed answer: never a cancelled one (the user
@@ -566,6 +571,10 @@ export function registerIpcHandlers(): void {
         updateRecentSearchAnswer(db, request.query, {
           text: response.text,
           citations: response.citations,
+          // Stored with the answer, not read from the checkbox at render time:
+          // restoring this search later must badge the text that was actually
+          // produced, whatever the box happens to say by then.
+          elaborate: run.elaborate,
         });
       }
 
@@ -585,6 +594,7 @@ export function registerIpcHandlers(): void {
           error_kind: response.errorKind ?? null,
           failure_reason: response.failureReason ?? null,
           retry: run.retry,
+          elaborate: run.elaborate,
           // Chunks the renderer asked to ground on vs. what survived the re-fetch.
           // A non-zero drop means results on screen were deleted since the search,
           // so the answer is grounded on less than the user is looking at.
@@ -620,6 +630,7 @@ export function registerIpcHandlers(): void {
           answer_model: run.model,
           doc_count: run.docCount,
           retry: run.retry,
+          elaborate: run.elaborate,
           elapsed_ms: Date.now() - run.startMs,
           first_token_ms: run.firstTokenMs,
           streamed_chars: run.streamedChars,
@@ -637,6 +648,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("answer:citation-opened", (_, position: number) => {
     if (!Number.isInteger(position) || position < 1) return;
     track("catena_answer_citation_opened", { position });
+  });
+
+  // Likewise narrow: one boolean, no free-form properties. The flag also rides
+  // along on the three answer events, which measure the generations that ran;
+  // this one catches the intent — ticking the box and never generating — which
+  // those cannot see.
+  ipcMain.handle("answer:elaborate-toggled", (_, enabled: boolean) => {
+    if (typeof enabled !== "boolean") return;
+    track("catena_answer_elaborate_toggled", { enabled });
   });
 
   // Which Notion sources the current token can no longer read. Notion's OAuth

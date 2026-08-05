@@ -31,12 +31,18 @@ vi.mock("../../db/database", () => ({
   getSetting: vi.fn(() => null),
 }));
 
+vi.mock("../pulled-models", () => ({
+  recordPulledModel: vi.fn(),
+  ensurePulledModelsRecord: vi.fn(),
+}));
+
 import { runSetup, pullChatModel, getStatusDetail } from "../setup";
 import { EMBED_MODEL, CHAT_MODEL } from "../platform";
 import { ensureEngine, isEngineUp } from "../runtime";
 import { listModels, hasModel, pullModel } from "../models";
 import { getDb } from "../../db/singleton";
 import { upsertSetting, getSetting } from "../../db/database";
+import { recordPulledModel, ensurePulledModelsRecord } from "../pulled-models";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,6 +52,9 @@ beforeEach(() => {
   });
   vi.mocked(isEngineUp).mockResolvedValue(true);
   vi.mocked(listModels).mockResolvedValue([]);
+  // Pinned here like the rest: `mockResolvedValue` survives `clearAllMocks`, so
+  // without a default every test inherits whatever the previous one set.
+  vi.mocked(hasModel).mockResolvedValue(false);
   vi.mocked(pullModel).mockImplementation(async (_m, onP) => {
     onP({ message: "x", percent: 100 });
   });
@@ -139,5 +148,80 @@ describe("getStatusDetail", () => {
     expect(detail.chatReady).toBe(false);
     expect(detail.setupInProgress).toBe(false);
     expect(listModels).not.toHaveBeenCalled();
+  });
+});
+
+describe("model provenance and duplicate pulls", () => {
+  it("records the embedding model when setup actually pulls it", async () => {
+    vi.mocked(hasModel).mockResolvedValue(false);
+
+    await runSetup(vi.fn());
+
+    expect(pullModel).toHaveBeenCalled();
+    expect(recordPulledModel).toHaveBeenCalledWith(
+      expect.anything(),
+      EMBED_MODEL,
+    );
+  });
+
+  it("does not claim a model that was already installed", async () => {
+    // Reused, not downloaded — so uninstall must never delete it.
+    vi.mocked(hasModel).mockResolvedValue(true);
+
+    await runSetup(vi.fn());
+
+    expect(pullModel).not.toHaveBeenCalled();
+    expect(recordPulledModel).not.toHaveBeenCalled();
+  });
+
+  it("skips the chat pull when the model is already installed", async () => {
+    // Ollama would not re-download the blobs, but it still needs the network for
+    // the manifest — so an offline user with llama3.2 present used to fail here.
+    vi.mocked(hasModel).mockResolvedValue(true);
+
+    await pullChatModel(vi.fn());
+
+    expect(pullModel).not.toHaveBeenCalled();
+    expect(recordPulledModel).not.toHaveBeenCalled();
+    // Still persisted, so answers use it.
+    expect(upsertSetting).toHaveBeenCalledWith(
+      expect.anything(),
+      "ollama_chat_model",
+      CHAT_MODEL,
+    );
+  });
+
+  it("records the chat model when it does pull it", async () => {
+    vi.mocked(hasModel).mockResolvedValue(false);
+
+    await pullChatModel(vi.fn());
+
+    expect(pullModel).toHaveBeenCalled();
+    expect(recordPulledModel).toHaveBeenCalledWith(
+      expect.anything(),
+      CHAT_MODEL,
+    );
+  });
+});
+
+describe("provenance is established even when nothing is pulled", () => {
+  it("opens a record on setup so 'we pulled nothing' is not mistaken for 'untracked'", async () => {
+    // The bug this pins: with both models already installed, setup pulled
+    // nothing and therefore wrote no record — and uninstall read that absence as
+    // "legacy install, delete the defaults", destroying the user's own models.
+    vi.mocked(hasModel).mockResolvedValue(true);
+
+    await runSetup(vi.fn());
+
+    expect(recordPulledModel).not.toHaveBeenCalled();
+    expect(ensurePulledModelsRecord).toHaveBeenCalled();
+  });
+
+  it("opens a record on the chat pull path too", async () => {
+    vi.mocked(hasModel).mockResolvedValue(true);
+
+    await pullChatModel(vi.fn());
+
+    expect(ensurePulledModelsRecord).toHaveBeenCalled();
   });
 });

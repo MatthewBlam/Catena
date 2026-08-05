@@ -343,6 +343,118 @@ describe("generateAnswer — Ollama", () => {
   });
 });
 
+describe("generateAnswer — Elaborate", () => {
+  /** Resolves once the provider has been called, with the request body it got. */
+  function captureCohereBody(): () => {
+    messages: { role: string; content: string }[];
+  } {
+    let body: { messages: { role: string; content: string }[] } | undefined;
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      body = JSON.parse(init!.body as string);
+      return Promise.resolve(
+        streamResponse([
+          sse("content-delta", { message: { content: { text: "ok" } } }),
+        ]),
+      );
+    });
+    return () => body!;
+  }
+
+  function captureOllamaBody(): () => {
+    messages: { role: string; content: string }[];
+  } {
+    let body: { messages: { role: string; content: string }[] } | undefined;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/tags")) {
+        return Promise.resolve(
+          jsonResponse({ models: [{ name: "llama3.2:latest" }] }),
+        );
+      }
+      body = JSON.parse(init!.body as string);
+      return Promise.resolve(
+        streamResponse([
+          JSON.stringify({ message: { content: "ok" }, done: true }) + "\n",
+        ]),
+      );
+    });
+    return () => body!;
+  }
+
+  const roleContent = (
+    body: { messages: { role: string; content: string }[] },
+    role: string,
+  ): string => body.messages.find((m) => m.role === role)!.content;
+
+  it("replaces the concision instruction rather than appending to it (Cohere)", async () => {
+    const body = captureCohereBody();
+
+    await generateAnswer("q", DOCS, COHERE, { onDelta: noop, elaborate: true });
+
+    const system = roleContent(body(), "system");
+    expect(system).toContain("Elaborate fully");
+    // "Be concise" and "elaborate fully" are contradictory orders. Leaving both
+    // in leaves the model to pick one, which is not a feature.
+    expect(system).not.toContain("Be concise");
+  });
+
+  it("leaves the question itself untouched", async () => {
+    const body = captureCohereBody();
+
+    await generateAnswer("when are dues due", DOCS, COHERE, {
+      onDelta: noop,
+      elaborate: true,
+    });
+
+    // The instruction belongs in the system prompt: the query keys the
+    // recent-search row this answer is saved against and is echoed back in the
+    // UI, so appending to it would corrupt both.
+    expect(roleContent(body(), "user")).toBe("when are dues due");
+  });
+
+  it("keeps the default prompt concise when the box is unchecked", async () => {
+    const body = captureCohereBody();
+
+    await generateAnswer("q", DOCS, COHERE, { onDelta: noop });
+
+    const system = roleContent(body(), "system");
+    expect(system).toContain("Be concise");
+    expect(system).not.toContain("Elaborate fully");
+  });
+
+  it("elaborates both messages on the Ollama path", async () => {
+    const body = captureOllamaBody();
+
+    await generateAnswer("q", DOCS, OLLAMA, {
+      onDelta: noop,
+      ollamaChatModel: "llama3.2",
+      elaborate: true,
+    });
+
+    expect(roleContent(body(), "system")).toContain("Elaborate fully");
+    // Ollama gets its own manual-RAG instruction on top of the system prompt,
+    // and it tells the model to be direct — so it has to move too, or the two
+    // halves of the same request disagree.
+    const user = roleContent(body(), "user");
+    expect(user).not.toContain("Give a direct, specific answer");
+    expect(user).toContain("thorough");
+    expect(user).toContain("# Question\nq");
+  });
+
+  it("keeps the Ollama instruction direct when the box is unchecked", async () => {
+    const body = captureOllamaBody();
+
+    await generateAnswer("q", DOCS, OLLAMA, {
+      onDelta: noop,
+      ollamaChatModel: "llama3.2",
+    });
+
+    expect(roleContent(body(), "user")).toContain(
+      "Give a direct, specific answer",
+    );
+    expect(roleContent(body(), "system")).not.toContain("Elaborate fully");
+  });
+});
+
 describe("generateAnswer — cancellation", () => {
   it("resolves cancelled (not thrown) when the caller's signal aborts", async () => {
     const controller = new AbortController();

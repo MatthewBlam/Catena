@@ -92,6 +92,7 @@ function mockApi(overrides: Partial<MockApiState> = {}): {
     search: vi.fn(() => Promise.resolve(state.searchResponse)),
     generateAnswer: vi.fn(() => Promise.resolve(state.answerResponse)),
     cancelAnswer: vi.fn(() => Promise.resolve()),
+    reportElaborateToggled: vi.fn(() => Promise.resolve()),
     onAnswerDelta: vi.fn((cb: (delta: AnswerDelta) => void) => {
       answerListeners.push(cb);
       return () => {
@@ -732,14 +733,21 @@ async function searchToResults(query = "reimbursement"): Promise<void> {
   await screen.findByText(/Results for/);
 }
 
-function generateArgs(): {
+function generateArgs(call = 0): {
   query: string;
   requestId: number;
   docs: unknown;
   retry?: boolean;
+  elaborate?: boolean;
 } {
-  return (window.api.generateAnswer as ReturnType<typeof vi.fn>).mock
-    .calls[0][0];
+  return (window.api.generateAnswer as ReturnType<typeof vi.fn>).mock.calls[
+    call
+  ][0];
+}
+
+/** The Elaborate badge on the answer card, by slot rather than by its text. */
+function elaborateBadge(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-slot="badge"]');
 }
 
 describe("SearchPage — generated answers", () => {
@@ -906,5 +914,124 @@ describe("SearchPage — generated answers", () => {
     const second = (window.api.generateAnswer as ReturnType<typeof vi.fn>).mock
       .calls[1][0];
     expect(second.retry).toBe(true);
+  });
+});
+
+describe("SearchPage — Elaborate", () => {
+  /** Searches, then ticks the Elaborate box. */
+  async function searchAndTick(): Promise<void> {
+    await searchToResults();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Elaborate" }));
+  }
+
+  it("sends the flag with the generation and badges the answer it produced", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1, searchResponse: ONE_RESULT });
+    render(<SearchPage visible={true} />);
+    await searchAndTick();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+
+    await waitFor(() => expect(window.api.generateAnswer).toHaveBeenCalled());
+    expect(generateArgs().elaborate).toBe(true);
+    expect(await screen.findByText("Generated answer.")).toBeInTheDocument();
+    expect(elaborateBadge()).toHaveTextContent("Elaborate");
+  });
+
+  it("generates without the flag, and without a badge, when the box is untouched", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1, searchResponse: ONE_RESULT });
+    render(<SearchPage visible={true} />);
+    await searchToResults();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+
+    await waitFor(() => expect(window.api.generateAnswer).toHaveBeenCalled());
+    expect(generateArgs().elaborate).toBe(false);
+    expect(await screen.findByText("Generated answer.")).toBeInTheDocument();
+    expect(elaborateBadge()).toBeNull();
+  });
+
+  it("reports each toggle, so ticking it and never generating is still visible", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1, searchResponse: ONE_RESULT });
+    render(<SearchPage visible={true} />);
+    await searchAndTick();
+    expect(window.api.reportElaborateToggled).toHaveBeenCalledWith(true);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Elaborate" }));
+    expect(window.api.reportElaborateToggled).toHaveBeenLastCalledWith(false);
+  });
+
+  it("carries the flag into a Try again", async () => {
+    mockApi({
+      hasCohereKey: true,
+      sourceCount: 1,
+      searchResponse: ONE_RESULT,
+      answerResponse: {
+        text: "",
+        citations: [],
+        errorKind: "failed",
+        error: "Couldn't generate an answer. Try again.",
+      },
+    });
+    render(<SearchPage visible={true} />);
+    await searchAndTick();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate answer" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() =>
+      expect(window.api.generateAnswer).toHaveBeenCalledTimes(2),
+    );
+    expect(generateArgs(1).elaborate).toBe(true);
+  });
+
+  it("badges a restored answer that was elaborated when it was generated", async () => {
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
+      <SearchPage
+        visible={true}
+        restore={{
+          detail: {
+            ...RESTORE_DETAIL,
+            answer: {
+              text: "Saved long answer.",
+              citations: [],
+              elaborate: true,
+            },
+          },
+          token: 1,
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Saved long answer.")).toBeInTheDocument();
+    expect(elaborateBadge()).toHaveTextContent("Elaborate");
+  });
+
+  it("leaves a restored answer from before the checkbox existed unbadged", async () => {
+    // Those rows have no `elaborate` key at all, and were never elaborated.
+    mockApi({ hasCohereKey: true, sourceCount: 1 });
+    const { rerender } = render(<SearchPage visible={true} restore={null} />);
+    rerender(
+      <SearchPage
+        visible={true}
+        restore={{
+          detail: {
+            ...RESTORE_DETAIL,
+            answer: { text: "Saved answer text.", citations: [] },
+          },
+          token: 1,
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Saved answer text.")).toBeInTheDocument();
+    expect(elaborateBadge()).toBeNull();
   });
 });

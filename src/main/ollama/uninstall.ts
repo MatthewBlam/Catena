@@ -9,6 +9,7 @@ import {
   stopEngine,
 } from "./runtime";
 import { deleteModel } from "./models";
+import { readPulledModels, clearPulledModels } from "./pulled-models";
 
 /**
  * Completely undoes what Catena installed for the local provider: removes the
@@ -18,12 +19,22 @@ import { deleteModel } from "./models";
  *     system/manual Ollama keeps running;
  *   - only the managed binary directory (`<userData>/ollama`) is deleted, never
  *     a user's own install (which lives elsewhere);
- *   - only the two Catena-default models are removed, never the user's others.
+ *   - only models Catena actually pulled are removed. Ollama's model store is
+ *     shared with a user's own install, so the two Catena defaults may well be
+ *     models they pulled themselves and we simply reused; deleting those would
+ *     destroy data we never created.
  *
  * Every step is best-effort so a single failure (e.g. the engine already gone)
  * still leaves the rest torn down rather than stranding a half-uninstall.
  */
 export async function uninstallOllama(signal?: AbortSignal): Promise<void> {
+  const db = getDb();
+  // `null` means this install predates provenance tracking, so we genuinely do
+  // not know what we pulled. Falling back to the two defaults is what the
+  // previous version did — the only option that neither regresses those users
+  // into a permanently orphaned model store nor invents a provenance claim.
+  const pulled = readPulledModels(db) ?? [EMBED_MODEL, CHAT_MODEL];
+
   // Model deletion needs a reachable engine. If ours is on disk but not running,
   // start it (no download — the binary is present) purely so we can delete the
   // models through the API. Tolerate a failure and press on to the disk cleanup.
@@ -36,8 +47,8 @@ export async function uninstallOllama(signal?: AbortSignal): Promise<void> {
     }
   }
 
-  if (await isEngineUp(signal)) {
-    for (const model of [EMBED_MODEL, CHAT_MODEL]) {
+  if (pulled.length > 0 && (await isEngineUp(signal))) {
+    for (const model of pulled) {
       try {
         await deleteModel(model, signal);
       } catch {
@@ -52,7 +63,7 @@ export async function uninstallOllama(signal?: AbortSignal): Promise<void> {
 
   await rm(ollamaDir(), { recursive: true, force: true });
 
-  const db = getDb();
   deleteSetting(db, "ollama_model");
   deleteSetting(db, "ollama_chat_model");
+  clearPulledModels(db);
 }

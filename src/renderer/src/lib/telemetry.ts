@@ -13,3 +13,11 @@ export function reportCitationOpened(position: number): void {
     // The bridge is missing (an old preload, a test harness). Nothing to do.
   }
 }
+
+export function reportElaborateToggled(enabled: boolean): void {
+  try {
+    void window.api.reportElaborateToggled(enabled).catch(() => {});
+  } catch {
+    // As above — never let a report break the toggle it is measuring.
+  }
+}

@@ -41,10 +41,18 @@ function baseProps(): Parameters<typeof AnswerPanel>[0] {
     text: "",
     citations: [],
     results: RESULTS,
+    elaborate: false,
+    elaborated: false,
     onGenerate: vi.fn(),
     onStop: vi.fn(),
     onRetry: vi.fn(),
+    onElaborateChange: vi.fn(),
   };
+}
+
+/** The badge, identified by its slot rather than its text. */
+function badge(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-slot="badge"]');
 }
 
 describe("AnswerPanel", () => {
@@ -197,6 +205,91 @@ describe("AnswerPanel", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers an Elaborate checkbox beside Generate answer", () => {
+    const onElaborateChange = vi.fn();
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="idle"
+        elaborate={false}
+        onElaborateChange={onElaborateChange}
+      />,
+    );
+
+    const box = screen.getByRole("checkbox", { name: "Elaborate" });
+    expect(box).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(box);
+    expect(onElaborateChange).toHaveBeenCalledWith(true);
+  });
+
+  it("unticks a ticked box", () => {
+    const onElaborateChange = vi.fn();
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="idle"
+        elaborate={true}
+        onElaborateChange={onElaborateChange}
+      />,
+    );
+
+    const box = screen.getByRole("checkbox", { name: "Elaborate" });
+    expect(box).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(box);
+    expect(onElaborateChange).toHaveBeenCalledWith(false);
+  });
+
+  it("badges an answer that was generated with Elaborate", () => {
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="done"
+        text="A long answer."
+        elaborated={true}
+      />,
+    );
+    expect(badge()).toHaveTextContent("Elaborate");
+  });
+
+  it("badges it while it is still streaming, not only once finished", () => {
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="streaming"
+        text="Partial"
+        elaborated={true}
+      />,
+    );
+    expect(badge()).toHaveTextContent("Elaborate");
+  });
+
+  it("shows no badge on an answer generated without it", () => {
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="done"
+        text="A short answer."
+        elaborated={false}
+      />,
+    );
+    expect(badge()).toBeNull();
+  });
+
+  it("badges the answer on screen, not the checkbox's current state", () => {
+    // The box is ticked now, but this answer predates that. Reading the live
+    // control here would relabel an answer that was never elaborated.
+    render(
+      <AnswerPanel
+        {...baseProps()}
+        status="done"
+        text="A short answer."
+        elaborate={true}
+        elaborated={false}
+      />,
+    );
+    expect(badge()).toBeNull();
   });
 
   it("shows the pull hint and no Try again for a missing Ollama model", () => {

@@ -77,7 +77,11 @@ import { ipcMain } from "electron";
 import { registerIpcHandlers } from "../handlers";
 import { track } from "../../telemetry/posthog";
 import { generateAnswer } from "../../search/answerer";
-import { getChunksByIds, getSetting } from "../../db/database";
+import {
+  getChunksByIds,
+  getSetting,
+  updateRecentSearchAnswer,
+} from "../../db/database";
 import { buildEmbedConfig } from "../sync-handlers";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
@@ -151,6 +155,7 @@ describe("answer:generate telemetry", () => {
       answer_model: "command-r-08-2024",
       doc_count: 2,
       retry: true,
+      elaborate: false,
     });
     expect(tracked("catena_answer_generated")).toBe(false);
   });
@@ -317,6 +322,91 @@ describe("answer:cancel", () => {
       handlerFor("answer:cancel")(SENDER, "user_stop"),
     ).not.toThrow();
     expect(tracked("catena_answer_cancelled")).toBe(false);
+  });
+});
+
+describe("Elaborate", () => {
+  it("hands the flag to the generator", async () => {
+    await handlerFor("answer:generate")(SENDER, request({ elaborate: true }));
+
+    expect(mockedGenerate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ elaborate: true }),
+    );
+  });
+
+  it("reports it on the request and on the completion", async () => {
+    await handlerFor("answer:generate")(SENDER, request({ elaborate: true }));
+
+    expect(props("catena_answer_requested")).toMatchObject({
+      elaborate: true,
+    });
+    // On both, so a longer generation's latency and length can be compared
+    // against a concise one rather than just counted.
+    expect(props("catena_answer_generated")).toMatchObject({
+      elaborate: true,
+    });
+  });
+
+  it("reports it on a user stop, so abandonment can be split by mode", async () => {
+    mockedGenerate.mockReturnValue(new Promise(() => {}));
+    void handlerFor("answer:generate")(SENDER, request({ elaborate: true }));
+    await Promise.resolve();
+
+    handlerFor("answer:cancel")(SENDER, "user_stop");
+
+    expect(props("catena_answer_cancelled")).toMatchObject({ elaborate: true });
+  });
+
+  it("saves the flag with the answer, so a restored search still shows the badge", async () => {
+    await handlerFor("answer:generate")(SENDER, request({ elaborate: true }));
+
+    expect(updateRecentSearchAnswer).toHaveBeenCalledWith(
+      expect.anything(),
+      "when are dues due",
+      {
+        text: "Dues are due in March.",
+        citations: [{ start: 0, end: 4, chunkId: "c1" }],
+        elaborate: true,
+      },
+    );
+  });
+
+  it("treats a request that omits the flag as not elaborated", async () => {
+    await handlerFor("answer:generate")(SENDER, request());
+
+    expect(mockedGenerate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ elaborate: false }),
+    );
+    expect(props("catena_answer_generated")).toMatchObject({
+      elaborate: false,
+    });
+  });
+});
+
+describe("answer:elaborate-toggled", () => {
+  it("tracks the checkbox's new state", () => {
+    handlerFor("answer:elaborate-toggled")(SENDER, true);
+    expect(props("catena_answer_elaborate_toggled")).toEqual({ enabled: true });
+  });
+
+  it("tracks unticking it too", () => {
+    handlerFor("answer:elaborate-toggled")(SENDER, false);
+    expect(props("catena_answer_elaborate_toggled")).toEqual({
+      enabled: false,
+    });
+  });
+
+  it("ignores anything that is not a boolean", () => {
+    handlerFor("answer:elaborate-toggled")(SENDER, "true");
+    handlerFor("answer:elaborate-toggled")(SENDER, 1);
+    handlerFor("answer:elaborate-toggled")(SENDER, undefined);
+    expect(tracked("catena_answer_elaborate_toggled")).toBe(false);
   });
 });
 
