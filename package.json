@@ -30,9 +30,8 @@
     "make": "pnpm run build && electron-forge make",
     "make:mac": "pnpm run build && electron-forge make --platform darwin",
     "make:win": "pnpm run build && electron-forge make --platform win32",
-    "test": "pnpm rebuild better-sqlite3 && vitest run",
-    "posttest": "rimraf node_modules/better-sqlite3/build node_modules/.vite && electron-rebuild -w better-sqlite3",
-    "test:watch": "pnpm rebuild better-sqlite3 && vitest"
+    "test": "node scripts/test.mjs run",
+    "test:watch": "node scripts/test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

@@ -27,6 +27,12 @@ import { initTelemetry, track, shutdownTelemetry } from "./telemetry/posthog";
 
 if (started) app.quit();
 
+// macOS is the only platform that runs frameless: the title bar is hidden, the
+// traffic lights float over the sidebar, and the renderer draws its own drag
+// surface. Everywhere else the window keeps its native frame — that is where
+// minimize/maximize/close, snap gestures and double-click-to-maximize come from.
+const isMac = process.platform === "darwin";
+
 // Collect minidumps for native crashes locally. `uploadToServer: false` keeps
 // this a local-first app — nothing leaves the machine — while still giving a
 // crash something to leave behind (see `app.getPath("crashDumps")`) instead of
@@ -52,9 +58,13 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    frame: false,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 22, y: 23 },
+    frame: !isMac,
+    ...(isMac
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 22, y: 23 },
+        }
+      : {}),
     icon,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
@@ -210,7 +220,7 @@ app
   });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (!isMac) {
     app.quit();
   }
 });

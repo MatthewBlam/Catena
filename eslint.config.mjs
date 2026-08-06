@@ -32,5 +32,11 @@ export default defineConfig(
       ],
     },
   },
+  {
+    // Plain-JS tooling scripts. The TS rules still reach them, but a `.mjs` file
+    // has nowhere to put a return-type annotation.
+    files: ["scripts/**/*.mjs"],
+    rules: { "@typescript-eslint/explicit-function-return-type": "off" },
+  },
   eslintConfigPrettier,
 );

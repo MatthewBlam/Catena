@@ -24,6 +24,33 @@ export function applyPragmas(db: Database.Database): void {
   db.pragma("busy_timeout = 5000");
 }
 
+/** Page-level damage that only a real read reveals. See `openAndVerify`. */
+class CorruptDatabaseError extends Error {}
+
+/**
+ * Is this the database being damaged, or this build being unable to ask?
+ *
+ * Only the first justifies moving a user's corpus aside. An Electron upgrade
+ * shipped with a `better-sqlite3` built for the wrong ABI fails here too — with
+ * `ERR_DLOPEN_FAILED`, on a perfectly healthy file — and quarantining that would
+ * empty the app for every user on the platform. Same for a permissions failure
+ * or a full disk: the file is intact, we simply cannot read it right now, and
+ * the honest response is to fail loudly (`index.ts` shows the message and quits)
+ * rather than to silently displace data.
+ *
+ * SQLite reports the two genuine cases as `SQLITE_NOTADB` (the header is not a
+ * database at all) and the `SQLITE_CORRUPT*` family (a malformed disk image).
+ */
+function isCorruption(err: unknown): boolean {
+  if (err instanceof CorruptDatabaseError) return true;
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return (
+    typeof code === "string" &&
+    (code === "SQLITE_NOTADB" || code.startsWith("SQLITE_CORRUPT"))
+  );
+}
+
 /**
  * Opens the database and proves it is actually readable.
  *
@@ -40,7 +67,7 @@ function openAndVerify(dbPath: string): Database.Database {
 
     const result = db.pragma("quick_check", { simple: true });
     if (result !== "ok") {
-      throw new Error(`quick_check reported: ${String(result)}`);
+      throw new CorruptDatabaseError(`quick_check reported: ${String(result)}`);
     }
     return db;
   } catch (err) {
@@ -74,8 +101,11 @@ export function getDb(): Database.Database {
   try {
     db = openAndVerify(dbPath);
   } catch (err) {
+    // Anything that is not damage to the file leaves it alone and takes the app
+    // down with a real message — see `isCorruption`.
+    if (!isCorruption(err)) throw err;
     console.error(
-      "Database is unreadable; quarantining and starting fresh:",
+      "Database is corrupt; quarantining and starting fresh:",
       err,
     );
     quarantine(dbPath);
@@ -86,7 +116,18 @@ export function getDb(): Database.Database {
   // a newer build, or a backup we could not write — means the file is intact and
   // we simply must not touch it. Quarantining on those would destroy a healthy
   // corpus because the user downgraded the app or ran low on disk.
-  runMigrations(db, dbPath);
+  //
+  // The handle still has to go, though: `_db` is never assigned on this path, so
+  // `closeDb()` cannot reach it and nothing else ever will. On macOS that is
+  // merely untidy — the process is about to die anyway — but on Windows an open
+  // handle holds a lock on the file, blocking anything that tries to move or
+  // delete it for as long as we are alive.
+  try {
+    runMigrations(db, dbPath);
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 
   _db = db;
   return _db;

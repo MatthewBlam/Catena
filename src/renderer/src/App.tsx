@@ -7,9 +7,20 @@ import { SettingsPage } from "@renderer/pages/SettingsPage";
 import { ErrorBoundary } from "@renderer/components/ui/ErrorBoundary";
 import { Spinner } from "@renderer/components/ui/spinner";
 import { cn } from "@renderer/lib/utils";
+import { IS_MAC } from "@renderer/lib/platform";
 import type { RecentSearch, RecentSearchDetail } from "../../shared/types";
 
-function DragRegion({ className }: { className?: string }): React.JSX.Element {
+// macOS runs frameless (hidden title bar, floating traffic lights), so the app
+// has to draw its own drag surface. Everywhere else the window keeps its native
+// frame, which drags itself — a drag region there would just be dead space above
+// the content.
+const CUSTOM_TITLE_BAR = IS_MAC;
+
+function DragRegion({
+  className,
+}: {
+  className?: string;
+}): React.JSX.Element | null {
   const rafRef = useRef(0);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -41,6 +52,7 @@ function DragRegion({ className }: { className?: string }): React.JSX.Element {
     el.addEventListener("lostpointercapture", onUp);
   }, []);
 
+  if (!CUSTOM_TITLE_BAR) return null;
   return <div className={className} onPointerDown={handlePointerDown} />;
 }
 

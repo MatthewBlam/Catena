@@ -148,6 +148,8 @@ interface CatenaAPI {
 }
 
 interface ElectronDrag {
+  /** Host platform; `darwin` is the only one with a frameless window. */
+  platform: NodeJS.Platform;
   startDrag(): void;
   dragging(): void;
   stopDrag(): void;

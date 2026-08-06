@@ -303,7 +303,12 @@ describe("ensureEngine — reclaiming a stale archive", () => {
     // 139 MB archive on disk, and the download path that now deletes it is never
     // reached again once the binary exists.
     placeBinary();
-    const stale = join(h.userDataDir, "ollama", "ollama-darwin.tgz");
+    // The name has to come from `resolveAsset`, not a literal: it is what
+    // `discardArchive` resolves against the running platform, so hardcoding the
+    // darwin `.tgz` made this pass on macOS and fail on Windows, where the file
+    // it deletes is `ollama-windows-{amd64,arm64}.zip`.
+    const { resolveAsset } = await import("../platform");
+    const stale = join(h.userDataDir, "ollama", resolveAsset().archiveName);
     writeFileSync(stale, "stale archive");
     engineDownThenUp();
 

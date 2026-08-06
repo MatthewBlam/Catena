@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdtempSync,
+  mkdirSync,
   rmSync,
   writeFileSync,
   readFileSync,
@@ -129,6 +130,20 @@ describe("corruption recovery", () => {
       (db.prepare("SELECT COUNT(*) AS c FROM sources").get() as { c: number })
         .c,
     ).toBe(0);
+  });
+
+  it("does NOT quarantine a file it merely cannot open", () => {
+    // The failure mode this guards against is an Electron upgrade shipping a
+    // `better-sqlite3` built for the wrong ABI: every open throws, on databases
+    // that are perfectly healthy. Quarantining those would empty the app for
+    // every user on the platform. A directory standing where the file should be
+    // reproduces the shape of it — an open that fails for reasons that have
+    // nothing to do with the contents.
+    mkdirSync(dbPath);
+
+    expect(() => getDb()).toThrow();
+    expect(quarantinedFiles()).toEqual([]);
+    expect(existsSync(dbPath)).toBe(true);
   });
 
   it("does NOT quarantine a healthy database from a newer build", () => {

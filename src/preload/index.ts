@@ -180,6 +180,9 @@ const api = {
 contextBridge.exposeInMainWorld("api", api);
 
 contextBridge.exposeInMainWorld("electronDrag", {
+  // The renderer has no other platform signal, and it needs one: only macOS
+  // runs frameless, so only macOS should draw a drag region at all.
+  platform: process.platform,
   startDrag: (): void => ipcRenderer.send("window:start-drag"),
   dragging: (): void => ipcRenderer.send("window:dragging"),
   stopDrag: (): void => ipcRenderer.send("window:stop-drag"),
